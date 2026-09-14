@@ -6,8 +6,10 @@ import java.sql.ResultSet;
 
 public class SafeUserService {
 
-    public void findUser(Connection conn, String userId)
-            throws Exception {
+    public void findUser(
+        Connection conn,
+        String userId
+    ) throws Exception {
 
         String sql =
             "SELECT * FROM USERS WHERE USER_ID = ?";
