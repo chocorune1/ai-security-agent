@@ -11,180 +11,254 @@ from analyzer.finding_merger import merge_findings
 
 def main():
 
-    print("STEP 1: main 시작", flush=True)
+    print("STEP 1: main 시작")
+
+    # ==================================================
+    # STEP 2. Source Load
+    # ==================================================
 
     source_dir = "../data/source"
 
-    print("STEP 2: source_loader 호출 전", flush=True)
+    print("STEP 2: source_loader 호출 전")
 
-    source_files = load_source_files(source_dir)
+    sources = load_source_files(source_dir)
 
     print(
-        f"STEP 3: source_loader 완료 - {len(source_files)}개",
-        flush=True
+        f"STEP 3: source_loader 완료 - "
+        f"{len(sources)}개"
     )
 
-    print("STEP 4: rule scanner 시작", flush=True)
+    # ==================================================
+    # STEP 3. Rule Scanner
+    # ==================================================
 
-    all_rule_findings = []
+    print("STEP 4: rule scanner 시작")
 
-    for source in source_files:
+    rule_findings = []
+
+    for source in sources:
 
         print(
-            f"  분석 중: {source['file_name']}",
-            flush=True
+            f"  분석 중: "
+            f"{source['file_name']}"
         )
 
         findings = analyze_source(source)
 
         print(
-            f"  → {len(findings)}개 발견",
-            flush=True
+            f"  → {len(findings)}개 발견"
         )
 
-        all_rule_findings.extend(findings)
+        rule_findings.extend(findings)
 
     print(
         f"STEP 5: Rule Scanner 완료 - "
-        f"{len(all_rule_findings)}개",
-        flush=True
+        f"{len(rule_findings)}개"
     )
 
-    print("STEP 6: Qwen 분석 시작", flush=True)
+    # ==================================================
+    # STEP 4. Qwen AI Analysis
+    # ==================================================
 
-    all_ai_findings = []
+    print("STEP 6: Qwen 분석 시작")
 
-    for source in source_files:
+    ai_results = []
+
+    for source in sources:
 
         print(
-            f"  Qwen 분석 중: {source['file_name']}",
-            flush=True
+            f"  Qwen 분석 중: "
+            f"{source['file_name']}"
         )
 
-        rule_findings = [
+        source_rule_findings = [
             finding
-            for finding in all_rule_findings
-            if finding["file"] == source["file_name"]
+            for finding in rule_findings
+            if finding.get("file")
+            == source["file_name"]
         ]
 
         result = analyze_with_qwen(
             source,
-            rule_findings
+            source_rule_findings
         )
 
-        if "findings" in result:
-            all_ai_findings.extend(
-                result["findings"]
-            )
+        if isinstance(result, list):
+            ai_results.extend(result)
 
     print(
         f"STEP 7: Qwen 분석 완료 - "
-        f"{len(all_ai_findings)}개",
-        flush=True
+        f"{len(ai_results)}개"
     )
 
-    print("STEP 8: Rule Finding 검증 시작", flush=True)
+    # ==================================================
+    # STEP 5. Rule Finding Validation
+    # ==================================================
+
+    print(
+        "STEP 8: Rule Finding 검증 시작"
+    )
 
     validation_results = []
 
-    for source in source_files:
+    for finding in rule_findings:
 
-        rule_findings = [
+        print(
+            f"검증 중: "
+            f"{finding.get('type')} / "
+            f"{finding.get('file')}:" 
+            f"{finding.get('line')}"
+        )
+
+        # 해당 원본 파일 찾기
+        source = None
+
+        for item in sources:
+
+            if (
+                item.get("file_name")
+                == finding.get("file")
+            ):
+                source = item
+                break
+
+        if source is None:
+            continue
+
+        validation = validate_rule_finding(
+            source,
             finding
-            for finding in all_rule_findings
-            if finding["file"] == source["file_name"]
-        ]
+        )
 
-        for finding in rule_findings:
+        if isinstance(validation, dict):
 
-            print(
-                f"  검증 중: "
-                f"{finding['type']} / "
-                f"{finding['file']}:{finding['line']}",
-                flush=True
+            # ------------------------------------------
+            # 검증 결과에 원본 Rule 정보 보완
+            # ------------------------------------------
+
+            if not validation.get("type"):
+                validation["type"] = finding.get(
+                    "type"
+                )
+
+            if not validation.get("file"):
+                validation["file"] = finding.get(
+                    "file"
+                )
+
+            if validation.get("line") is None:
+                validation["line"] = finding.get(
+                    "line"
+                )
+
+            validation_results.append(
+                validation
             )
-
-            result = validate_rule_finding(
-                source,
-                finding
-            )
-
-            validation_results.append(result)
 
     print(
-        "STEP 9: Rule Finding 검증 완료",
-        flush=True
+        "STEP 9: Rule Finding 검증 완료"
     )
 
-    print("STEP 10: Finding Merge 시작", flush=True)
+    # ==================================================
+    # STEP 6. Finding Merge
+    # ==================================================
+
+    print(
+        "STEP 10: Finding Merge 시작"
+    )
 
     final_findings = merge_findings(
-        all_rule_findings,
-        all_ai_findings,
+        rule_findings,
+        ai_results,
         validation_results
     )
 
     print(
         f"STEP 11: 최종 결과 - "
-        f"{len(final_findings)}개",
-        flush=True
+        f"{len(final_findings)}개"
     )
 
+    # ==================================================
+    # STEP 7. Final Report
+    # ==================================================
+
     print()
-    print("=" * 60)
+    print("=" * 70)
     print("최종 보안 점검 결과")
-    print("=" * 60)
+    print("=" * 70)
 
-    for index, finding in enumerate(
-        final_findings,
-        start=1
-    ):
-        print()
-        print(
-            f"[{index}] "
-            f"{finding.get('severity', 'UNKNOWN')} - "
-            f"{finding.get('type', 'UNKNOWN')}"
-        )
+    if not final_findings:
 
-        print(
-            f"파일 : "
-            f"{finding.get('file', '-')}"
-        )
+        print("취약점이 발견되지 않았습니다.")
 
-        print(
-            f"라인 : "
-            f"{finding.get('line', '-')}"
-        )
+    else:
 
-        print(
-            f"탐지 방식 : "
-            f"{finding.get('detection', '-')}"
-        )
+        for index, finding in enumerate(
+            final_findings,
+            start=1
+        ):
 
-        print(
-            f"신뢰도 : "
-            f"{finding.get('confidence', '-')}"
-        )
+            print()
+            print(
+                f"[{index}]"
+            )
 
-        print(
-            f"상태 : "
-            f"{finding.get('status', '-')}"
-        )
+            print(
+                f"취약점: "
+                f"{finding.get('type', '-')}"
+            )
 
-        print(
-            f"설명 : "
-            f"{finding.get('description', '-')}"
-        )
+            print(
+                f"심각도: "
+                f"{finding.get('severity', '-')}"
+            )
 
-        print(
-            f"조치 : "
-            f"{finding.get('recommendation', '-')}"
-        )
+            print(
+                f"파일: "
+                f"{finding.get('file', '-')}"
+            )
 
-    print()
-    print("=" * 60)
-    print("분석 완료")
-    print("=" * 60)
+            print(
+                f"라인: "
+                f"{finding.get('line', '-')}"
+            )
+
+            print(
+                f"탐지 방법: "
+                f"{finding.get('detection', '-')}"
+            )
+
+            print(
+                f"상태: "
+                f"{finding.get('status', '-')}"
+            )
+
+            print(
+                f"신뢰도: "
+                f"{finding.get('confidence', '-')}"
+            )
+
+            print(
+                f"증거: "
+                f"{finding.get('evidence', '-')}"
+            )
+
+            print(
+                f"설명: "
+                f"{finding.get('description', '-')}"
+            )
+
+            print(
+                f"판단 근거: "
+                f"{finding.get('reason', '-')}"
+            )
+
+            print(
+                f"개선 방법: "
+                f"{finding.get('recommendation', '-')}"
+            )
+
+            print("-" * 70)
 
 
 if __name__ == "__main__":
