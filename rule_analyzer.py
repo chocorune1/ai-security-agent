@@ -48,15 +48,30 @@ def analyze_source(source):
         # ==========================================
         # 2. SQL Injection
         # ==========================================
-
         sql_pattern = re.search(
             r'["\'].*\b(SELECT|INSERT|UPDATE|DELETE)'
             r'\b.*["\']',
             line,
             re.IGNORECASE
         )
-
-        if sql_pattern and "+" in line:
+        
+        if sql_pattern:
+        
+            # SQL 문자열이 발견되면 우선 의심 대상으로 등록
+            # 실제 취약 여부는 Qwen이 검증한다.
+            findings.append({
+                "type": "SQL Injection",
+                "severity": "HIGH",
+                "file": file_name,
+                "line": line_number,
+                "evidence": line.strip(),
+                "description":
+                    "SQL 쿼리 문자열이 발견되었습니다. "
+                    "외부 입력값이 안전하게 처리되는지 확인이 필요합니다.",
+                "recommendation":
+                    "PreparedStatement 또는 parameterized query를 "
+                    "사용하고 사용자 입력값을 SQL 문자열에 직접 연결하지 마세요."
+            })
 
             findings.append({
                 "type": "SQL Injection",
