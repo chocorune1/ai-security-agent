@@ -92,7 +92,38 @@ def main():
             source,
             rule_findings
         )
+        
+        # =================================
+        # Rule Finding AI 검증
+        # =================================
 
+        validation_results = []
+
+        print()
+        print(
+            "Rule Finding AI 검증 중..."
+        )
+
+        for rule_finding in rule_findings:
+
+            validation = validate_rule_finding(
+                source,
+                rule_finding
+            )
+
+            validation_results.append({
+                "type": rule_finding["type"],
+                "line": rule_finding["line"],
+                "status": validation["status"],
+                "reason": validation["reason"]
+            })
+
+            print(
+                f"[검증] "
+                f"{rule_finding['type']} "
+                f"(라인 {rule_finding['line']}) "
+                f"→ {validation['status']}"
+            )
         # ---------------------------------
         # 3. AI 결과 확인
         # ---------------------------------
@@ -128,10 +159,11 @@ def main():
         # ---------------------------------
         # 4. Rule + AI 통합
         # ---------------------------------
-
+        
         final_findings = merge_findings(
             rule_findings,
-            ai_result
+            ai_result,
+            validation_results
         )
 
         total_final_findings += len(
