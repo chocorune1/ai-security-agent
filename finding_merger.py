@@ -36,13 +36,11 @@ def merge_findings(
 
     for finding in ai_result:
 
-        # 잘못된 데이터가 들어온 경우 무시
         if not isinstance(finding, dict):
             continue
 
         finding_type = finding.get("type")
 
-        # type이 없는 AI 결과는 무시
         if not finding_type:
             continue
 
@@ -56,7 +54,7 @@ def merge_findings(
             "HIGH"
         )
 
-        # FALSE_POSITIVE는 최종 결과에서 제외
+        # FALSE_POSITIVE는 제외
         if status == "FALSE_POSITIVE":
             continue
 
@@ -66,7 +64,13 @@ def merge_findings(
                 "severity",
                 "MEDIUM"
             ),
-            "line": finding.get("line"),
+            "file": finding.get(
+                "file",
+                ""
+            ),
+            "line": finding.get(
+                "line"
+            ),
             "evidence": finding.get(
                 "evidence",
                 ""
@@ -83,7 +87,7 @@ def merge_findings(
                 "recommendation",
                 ""
             ),
-            "source": "AI",
+            "detection": "AI",
             "confidence": confidence,
             "status": status
         })
@@ -99,35 +103,51 @@ def merge_findings(
 
         rule_type = rule.get("type")
         rule_line = rule.get("line")
+        rule_file = rule.get(
+            "file",
+            ""
+        )
 
         if not rule_type:
             continue
 
-        # --------------------------------------------------
-        # Qwen 검증 결과 찾기
-        # --------------------------------------------------
+        # ==================================================
+        # 2-1. Qwen 검증 결과 찾기
+        # ==================================================
 
         validation = None
 
         for result in validation_results:
 
-            # validation 결과가 dictionary가 아닌 경우 무시
             if not isinstance(result, dict):
                 continue
 
             result_type = result.get("type")
             result_line = result.get("line")
+            result_file = result.get(
+                "file",
+                ""
+            )
 
-            # type이 없는 validation 결과는 무시
             if not result_type:
                 continue
 
-            # type 비교
             if result_type != rule_type:
+                continue
+
+            # 파일명이 있으면 파일도 비교
+            if (
+                result_file
+                and
+                rule_file
+                and
+                result_file != rule_file
+            ):
                 continue
 
             # line 비교
             try:
+
                 if (
                     result_line is not None
                     and
@@ -142,7 +162,7 @@ def merge_findings(
                 continue
 
         # ==================================================
-        # 3. Qwen이 SAFE라고 판단
+        # 2-2. Qwen이 SAFE라고 판단
         # ==================================================
 
         if validation:
@@ -156,14 +176,15 @@ def merge_findings(
                 print(
                     f"[제외] "
                     f"{rule_type} "
-                    f"라인 {rule_line} "
+                    f"{rule_file}:"
+                    f"{rule_line} "
                     f"→ Qwen SAFE"
                 )
 
                 continue
 
         # ==================================================
-        # 4. AI 분석 결과와 Rule 결과 매칭
+        # 2-3. AI 분석 결과와 Rule 결과 매칭
         # ==================================================
 
         matched = False
@@ -174,6 +195,21 @@ def merge_findings(
                 continue
 
             if finding.get("type") != rule_type:
+                continue
+
+            # 파일명이 있으면 같은 파일인지 확인
+            finding_file = finding.get(
+                "file",
+                ""
+            )
+
+            if (
+                finding_file
+                and
+                rule_file
+                and
+                finding_file != rule_file
+            ):
                 continue
 
             try:
@@ -190,12 +226,14 @@ def merge_findings(
 
                 continue
 
-            # 같은 취약점이고 ±2라인 이내면 동일 취약점으로 판단
-            if abs(ai_line - current_rule_line) <= 2:
+            # 같은 취약점이고 ±2라인 이내
+            if abs(
+                ai_line - current_rule_line
+            ) <= 2:
 
                 matched = True
 
-                finding["source"] = "RULE + AI"
+                finding["detection"] = "RULE + AI"
 
                 finding["status"] = "CONFIRMED"
 
@@ -204,14 +242,10 @@ def merge_findings(
                 break
 
         # ==================================================
-        # 5. AI와 매칭되지 않은 Rule
+        # 2-4. AI와 매칭되지 않은 Rule
         # ==================================================
 
         if not matched:
-
-            # ----------------------------------------------
-            # Qwen이 REVIEW라고 판단
-            # ----------------------------------------------
 
             if (
                 validation
@@ -227,10 +261,6 @@ def merge_findings(
                     "reason",
                     "Qwen이 추가 검토가 필요하다고 판단했습니다."
                 )
-
-            # ----------------------------------------------
-            # 검증 결과가 없거나 알 수 없는 경우
-            # ----------------------------------------------
 
             else:
 
@@ -249,6 +279,7 @@ def merge_findings(
                     "severity",
                     "MEDIUM"
                 ),
+                "file": rule_file,
                 "line": rule_line,
                 "evidence": rule.get(
                     "evidence",
@@ -263,13 +294,13 @@ def merge_findings(
                     "recommendation",
                     ""
                 ),
-                "source": "RULE",
+                "detection": "RULE",
                 "confidence": confidence,
                 "status": status
             })
 
     # ==================================================
-    # 6. 최종 결과 반환
+    # 3. 최종 결과 반환
     # ==================================================
 
     return merged
