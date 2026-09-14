@@ -6,20 +6,15 @@ def merge_findings(
     """
     Rule Scanner + Qwen 분석 + Qwen 검증 결과를 통합한다.
 
-    입력:
-    - rule_findings: Rule Scanner 결과 list
-    - ai_result: Qwen 분석 결과 list
-    - validation_results: Qwen 검증 결과 list
-
-    출력:
-    - 최종 통합 취약점 결과 list
+    핵심 기능:
+    1. Qwen 결과의 파일명이 비어 있으면 Rule Scanner 결과로 보완
+    2. Qwen 결과의 line이 비어 있으면 Rule Scanner 결과로 보완
+    3. Rule + AI가 같은 취약점을 찾으면 하나로 통합
+    4. Qwen 검증 결과가 SAFE이면 Rule 결과를 제외
+    5. 최종 결과에는 가능한 한 file / line / detection을 항상 표시
     """
 
     merged = []
-
-    # ==================================================
-    # 0. 입력값 안전 처리
-    # ==================================================
 
     if not isinstance(rule_findings, list):
         rule_findings = []
@@ -31,139 +26,326 @@ def merge_findings(
         validation_results = []
 
     # ==================================================
-    # 1. AI 분석 결과 처리
+    # 1. Qwen 검증 결과를 빠르게 찾기 위한 함수
     # ==================================================
 
-    for finding in ai_result:
+    def find_validation(rule):
 
-        if not isinstance(finding, dict):
+        rule_type = rule.get("type")
+        rule_file = rule.get("file", "")
+        rule_line = rule.get("line")
+
+        for validation in validation_results:
+
+            if not isinstance(validation, dict):
+                continue
+
+            validation_type = validation.get("type")
+            validation_file = validation.get("file", "")
+            validation_line = validation.get("line")
+
+            # type 비교
+            if (
+                validation_type
+                and rule_type
+                and validation_type != rule_type
+            ):
+                continue
+
+            # 파일명이 둘 다 있으면 비교
+            if (
+                validation_file
+                and rule_file
+                and validation_file != rule_file
+            ):
+                continue
+
+            # line 비교
+            if (
+                validation_line is not None
+                and rule_line is not None
+            ):
+                try:
+                    if int(validation_line) != int(rule_line):
+                        continue
+                except (TypeError, ValueError):
+                    continue
+
+            return validation
+
+        return None
+
+    # ==================================================
+    # 2. Qwen 결과와 Rule 결과를 매칭하는 함수
+    # ==================================================
+
+    def find_matching_rule(ai_finding):
+
+        ai_type = ai_finding.get("type")
+        ai_file = ai_finding.get("file", "")
+        ai_line = ai_finding.get("line")
+
+        candidates = []
+
+        for rule in rule_findings:
+
+            if not isinstance(rule, dict):
+                continue
+
+            if rule.get("type") != ai_type:
+                continue
+
+            rule_file = rule.get("file", "")
+            rule_line = rule.get("line")
+
+            # 파일명이 Qwen 결과에 있는 경우
+            # 파일명이 같은 것만 후보로 사용
+            if (
+                ai_file
+                and rule_file
+                and ai_file != rule_file
+            ):
+                continue
+
+            # line이 둘 다 있는 경우
+            if (
+                ai_line is not None
+                and rule_line is not None
+            ):
+                try:
+                    distance = abs(
+                        int(ai_line) - int(rule_line)
+                    )
+                except (TypeError, ValueError):
+                    continue
+
+                if distance <= 2:
+                    candidates.append(
+                        (distance, rule)
+                    )
+
+            else:
+                candidates.append(
+                    (999, rule)
+                )
+
+        if not candidates:
+            return None
+
+        # 가장 가까운 line을 선택
+        candidates.sort(
+            key=lambda item: item[0]
+        )
+
+        return candidates[0][1]
+
+    # ==================================================
+    # 3. Qwen 분석 결과 처리
+    # ==================================================
+
+    matched_rule_indexes = set()
+
+    for ai_finding in ai_result:
+
+        if not isinstance(ai_finding, dict):
             continue
 
-        finding_type = finding.get("type")
+        finding_type = ai_finding.get("type")
 
         if not finding_type:
             continue
 
-        status = finding.get(
+        status = ai_finding.get(
             "status",
             "CONFIRMED"
         )
 
-        confidence = finding.get(
+        confidence = ai_finding.get(
             "confidence",
             "HIGH"
         )
 
-        # FALSE_POSITIVE는 제외
+        # FALSE_POSITIVE 제외
         if status == "FALSE_POSITIVE":
             continue
 
-        merged.append({
-            "type": finding_type,
-            "severity": finding.get(
-                "severity",
-                "MEDIUM"
-            ),
-            "file": finding.get(
+        # ----------------------------------------------
+        # Rule 결과와 매칭
+        # ----------------------------------------------
+
+        matching_rule = find_matching_rule(
+            ai_finding
+        )
+
+        # ----------------------------------------------
+        # 파일명 보완
+        # ----------------------------------------------
+
+        ai_file = ai_finding.get(
+            "file",
+            ""
+        )
+
+        if not ai_file and matching_rule:
+            ai_file = matching_rule.get(
                 "file",
                 ""
-            ),
-            "line": finding.get(
+            )
+
+        # ----------------------------------------------
+        # line 보완
+        # ----------------------------------------------
+
+        ai_line = ai_finding.get(
+            "line"
+        )
+
+        if ai_line is None and matching_rule:
+            ai_line = matching_rule.get(
                 "line"
-            ),
-            "evidence": finding.get(
+            )
+
+        # ----------------------------------------------
+        # evidence 보완
+        # ----------------------------------------------
+
+        evidence = ai_finding.get(
+            "evidence",
+            ""
+        )
+
+        if not evidence and matching_rule:
+            evidence = matching_rule.get(
                 "evidence",
                 ""
-            ),
-            "description": finding.get(
+            )
+
+        # ----------------------------------------------
+        # severity 보완
+        # ----------------------------------------------
+
+        severity = ai_finding.get(
+            "severity"
+        )
+
+        if not severity and matching_rule:
+            severity = matching_rule.get(
+                "severity",
+                "MEDIUM"
+            )
+
+        # ----------------------------------------------
+        # description 보완
+        # ----------------------------------------------
+
+        description = ai_finding.get(
+            "description",
+            ""
+        )
+
+        if not description and matching_rule:
+            description = matching_rule.get(
                 "description",
                 ""
-            ),
-            "reason": finding.get(
-                "reason",
-                "Qwen AI가 보안 취약점을 확인했습니다."
-            ),
-            "recommendation": finding.get(
+            )
+
+        # ----------------------------------------------
+        # recommendation 보완
+        # ----------------------------------------------
+
+        recommendation = ai_finding.get(
+            "recommendation",
+            ""
+        )
+
+        if (
+            not recommendation
+            and matching_rule
+        ):
+            recommendation = matching_rule.get(
                 "recommendation",
                 ""
-            ),
-            "detection": "AI",
+            )
+
+        # ----------------------------------------------
+        # reason
+        # ----------------------------------------------
+
+        reason = ai_finding.get(
+            "reason",
+            "Qwen AI가 보안 취약점을 확인했습니다."
+        )
+
+        # ----------------------------------------------
+        # detection
+        # ----------------------------------------------
+
+        if matching_rule:
+
+            detection = "RULE + AI"
+
+            matched_rule_indexes.add(
+                rule_findings.index(
+                    matching_rule
+                )
+            )
+
+            status = "CONFIRMED"
+            confidence = "HIGH"
+
+        else:
+
+            detection = "AI"
+
+        # ----------------------------------------------
+        # 최종 결과 추가
+        # ----------------------------------------------
+
+        merged.append({
+            "type": finding_type,
+            "severity": severity or "MEDIUM",
+            "file": ai_file,
+            "line": ai_line,
+            "evidence": evidence,
+            "description": description,
+            "reason": reason,
+            "recommendation": recommendation,
+            "detection": detection,
             "confidence": confidence,
             "status": status
         })
 
     # ==================================================
-    # 2. Rule Finding 처리
+    # 4. Rule Scanner 결과 처리
     # ==================================================
 
-    for rule in rule_findings:
+    for index, rule in enumerate(rule_findings):
 
         if not isinstance(rule, dict):
             continue
 
         rule_type = rule.get("type")
-        rule_line = rule.get("line")
         rule_file = rule.get(
             "file",
             ""
         )
+        rule_line = rule.get("line")
 
         if not rule_type:
             continue
 
-        # ==================================================
-        # 2-1. Qwen 검증 결과 찾기
-        # ==================================================
+        # ----------------------------------------------
+        # 이미 AI와 매칭된 Rule이면 skip
+        # ----------------------------------------------
 
-        validation = None
+        if index in matched_rule_indexes:
+            continue
 
-        for result in validation_results:
+        # ----------------------------------------------
+        # Qwen 검증 결과 확인
+        # ----------------------------------------------
 
-            if not isinstance(result, dict):
-                continue
-
-            result_type = result.get("type")
-            result_line = result.get("line")
-            result_file = result.get(
-                "file",
-                ""
-            )
-
-            if not result_type:
-                continue
-
-            if result_type != rule_type:
-                continue
-
-            # 파일명이 있으면 파일도 비교
-            if (
-                result_file
-                and
-                rule_file
-                and
-                result_file != rule_file
-            ):
-                continue
-
-            # line 비교
-            try:
-
-                if (
-                    result_line is not None
-                    and
-                    rule_line is not None
-                    and
-                    int(result_line) == int(rule_line)
-                ):
-                    validation = result
-                    break
-
-            except (TypeError, ValueError):
-                continue
-
-        # ==================================================
-        # 2-2. Qwen이 SAFE라고 판단
-        # ==================================================
+        validation = find_validation(rule)
 
         if validation:
 
@@ -171,6 +353,7 @@ def merge_findings(
                 "status"
             )
 
+            # Qwen이 안전하다고 판단
             if validation_status == "SAFE":
 
                 print(
@@ -183,124 +366,80 @@ def merge_findings(
 
                 continue
 
-        # ==================================================
-        # 2-3. AI 분석 결과와 Rule 결과 매칭
-        # ==================================================
+        # ----------------------------------------------
+        # Rule만 탐지된 경우
+        # ----------------------------------------------
 
-        matched = False
+        if validation:
 
-        for finding in merged:
-
-            if not isinstance(finding, dict):
-                continue
-
-            if finding.get("type") != rule_type:
-                continue
-
-            # 파일명이 있으면 같은 파일인지 확인
-            finding_file = finding.get(
-                "file",
-                ""
+            status = validation.get(
+                "status",
+                "REVIEW"
             )
 
-            if (
-                finding_file
-                and
-                rule_file
-                and
-                finding_file != rule_file
-            ):
-                continue
-
-            try:
-
-                ai_line = int(
-                    finding.get("line")
-                )
-
-                current_rule_line = int(
-                    rule_line
-                )
-
-            except (TypeError, ValueError):
-
-                continue
-
-            # 같은 취약점이고 ±2라인 이내
-            if abs(
-                ai_line - current_rule_line
-            ) <= 2:
-
-                matched = True
-
-                finding["detection"] = "RULE + AI"
-
-                finding["status"] = "CONFIRMED"
-
-                finding["confidence"] = "HIGH"
-
-                break
-
-        # ==================================================
-        # 2-4. AI와 매칭되지 않은 Rule
-        # ==================================================
-
-        if not matched:
-
-            if (
-                validation
-                and
-                validation.get("status") == "REVIEW"
-            ):
-
-                status = "REVIEW_REQUIRED"
-
+            if status == "REVIEW":
+                final_status = "REVIEW_REQUIRED"
                 confidence = "LOW"
-
                 reason = validation.get(
                     "reason",
                     "Qwen이 추가 검토가 필요하다고 판단했습니다."
                 )
 
             else:
-
-                status = "REVIEW_REQUIRED"
-
+                final_status = "REVIEW_REQUIRED"
                 confidence = "LOW"
-
-                reason = (
-                    "Rule Scanner에서 의심 패턴이 "
-                    "탐지되었으나 AI 분석과 매칭되지 않았습니다."
+                reason = validation.get(
+                    "reason",
+                    "Rule Scanner에서 의심 패턴이 탐지되었습니다."
                 )
 
-            merged.append({
-                "type": rule_type,
-                "severity": rule.get(
-                    "severity",
-                    "MEDIUM"
-                ),
-                "file": rule_file,
-                "line": rule_line,
-                "evidence": rule.get(
-                    "evidence",
-                    ""
-                ),
-                "description": rule.get(
-                    "description",
-                    ""
-                ),
-                "reason": reason,
-                "recommendation": rule.get(
-                    "recommendation",
-                    ""
-                ),
-                "detection": "RULE",
-                "confidence": confidence,
-                "status": status
-            })
+        else:
+
+            final_status = "REVIEW_REQUIRED"
+            confidence = "LOW"
+
+            reason = (
+                "Rule Scanner에서 의심 패턴이 "
+                "탐지되었으나 AI 분석과 매칭되지 않았습니다."
+            )
+
+        merged.append({
+            "type": rule_type,
+            "severity": rule.get(
+                "severity",
+                "MEDIUM"
+            ),
+            "file": rule_file,
+            "line": rule_line,
+            "evidence": rule.get(
+                "evidence",
+                ""
+            ),
+            "description": rule.get(
+                "description",
+                ""
+            ),
+            "reason": reason,
+            "recommendation": rule.get(
+                "recommendation",
+                ""
+            ),
+            "detection": "RULE",
+            "confidence": confidence,
+            "status": final_status
+        })
 
     # ==================================================
-    # 3. 최종 결과 반환
+    # 5. 최종 결과 정리
     # ==================================================
+
+    # 파일명이 비어 있는 결과가 있는지 확인
+    for finding in merged:
+
+        if not finding.get("file"):
+            finding["file"] = "UNKNOWN"
+
+        if finding.get("line") is None:
+            finding["line"] = "-"
 
     return merged
