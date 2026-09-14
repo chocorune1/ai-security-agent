@@ -202,10 +202,10 @@ CONFIRMED로 판단하세요.
 
 반드시 아래 JSON 형식으로만 답변하세요.
 
-{
+{{
   "file": "파일명",
   "findings": [
-    {
+    {{
       "type": "SQL Injection",
       "severity": "HIGH",
       "line": 14,
@@ -215,9 +215,9 @@ CONFIRMED로 판단하세요.
       "recommendation": "구체적인 수정 방법",
       "status": "CONFIRMED",
       "confidence": "HIGH"
-    }
+    }}
   ]
-}
+}}
 
 취약점이 없거나
 Rule Scanner가 오탐한 경우에도
@@ -225,10 +225,10 @@ Rule Scanner가 오탐한 경우에도
 
 취약점이 전혀 없다면:
 
-{
+{{
   "file": "파일명",
   "findings": []
-}
+}}
 
 JSON 이외의 설명이나 Markdown을 추가하지 마세요.
 """
