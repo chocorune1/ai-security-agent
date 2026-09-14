@@ -268,3 +268,123 @@ def parse_qwen_response(response):
             "error": "Qwen 응답을 JSON으로 변환할 수 없습니다.",
             "raw_response": response
         }
+
+def validate_rule_finding(source, finding):
+    """
+    Rule Scanner가 발견한 취약점이
+    실제 취약점인지 Qwen에게 검증받는다.
+
+    결과:
+    VULNERABLE
+    SAFE
+    REVIEW
+    """
+
+    file_name = source["file_name"]
+    extension = source["extension"]
+    content = source["content"]
+
+    prompt = f"""
+당신은 소프트웨어 보안 코드 리뷰 전문가입니다.
+
+아래 소스코드에서 Rule Scanner가
+보안 취약점 가능성을 발견했습니다.
+
+하지만 Rule Scanner의 결과를 그대로 믿지 말고
+실제 코드 흐름을 분석해서 판단하세요.
+
+==============================
+파일
+==============================
+
+{file_name}
+
+파일 유형:
+{extension}
+
+==============================
+전체 소스코드
+==============================
+
+{content}
+
+==============================
+Rule Scanner 발견
+==============================
+
+취약점 유형:
+{finding["type"]}
+
+의심 라인:
+{finding["line"]}
+
+의심 코드:
+{finding["evidence"]}
+
+==============================
+판정 기준
+==============================
+
+실제로 외부 입력값이 위험한 방식으로 사용되어
+보안 취약점이 발생할 수 있으면:
+
+VULNERABLE
+
+안전한 처리 방식이 적용되어 실제 취약점이 아니면:
+
+SAFE
+
+현재 코드만으로 판단하기 어려우면:
+
+REVIEW
+
+==============================
+출력 규칙
+==============================
+
+반드시 첫 번째 단어로 다음 중 하나만 출력하세요.
+
+VULNERABLE
+SAFE
+REVIEW
+
+그 뒤에 판단 이유를 한두 문장으로 작성해도 됩니다.
+
+예:
+
+VULNERABLE
+사용자 입력값이 SQL 문자열에 직접 연결됩니다.
+
+또는:
+
+SAFE
+PreparedStatement의 parameter binding을 사용하고 있습니다.
+
+또는:
+
+REVIEW
+외부 메서드에서 전달되는 값의 출처를 확인해야 합니다.
+"""
+
+    response = ask_qwen(prompt)
+
+    response = response.strip()
+
+    upper_response = response.upper()
+
+    if upper_response.startswith("VULNERABLE"):
+        status = "VULNERABLE"
+
+    elif upper_response.startswith("SAFE"):
+        status = "SAFE"
+
+    elif upper_response.startswith("REVIEW"):
+        status = "REVIEW"
+
+    else:
+        status = "REVIEW"
+
+    return {
+        "status": status,
+        "reason": response
+    }
