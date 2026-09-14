@@ -1,7 +1,10 @@
 from scanner.source_loader import load_source_files
 from scanner.rule_analyzer import analyze_source
 
-from analyzer.security_analyzer import analyze_with_qwen
+from analyzer.security_analyzer import (
+    analyze_with_qwen,
+    validate_rule_finding
+)
 from analyzer.finding_merger import merge_findings
 
 
