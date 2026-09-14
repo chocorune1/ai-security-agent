@@ -1,1 +1,17 @@
 
+기능	상태
+Java/JS/JSP 소스 로딩	✅
+Rule 기반 취약점 탐지	✅
+Qwen 27B 연동	✅
+AI 소스코드 분석	✅
+JSON 결과 구조화	✅
+ChromaDB	✅
+보안 지식 검색	✅
+RAG → Qwen 전달	✅
+Rule + AI 결과 통합	✅
+중복 탐지 처리	✅
+최종 Finding 생성	✅
+HTML 보고서	⬜
+PDF 보고서	⬜
+JavaScript/JSP 테스트	⬜
+실제 Agent 형태	⬜
