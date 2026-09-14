@@ -9,10 +9,7 @@ def merge_findings(
 
     merged = []
 
-    ai_findings = ai_result.get(
-        "findings",
-        []
-    )
+    ai_findings = ai_result
 
     # =====================================
     # 1. AI 분석 결과
