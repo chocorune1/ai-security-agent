@@ -1,13 +1,10 @@
-def merge_findings(rule_findings, ai_result):
+def merge_findings(
+    rule_findings,
+    ai_result,
+    validation_results
+):
     """
-    Rule Scanner와 Qwen AI 결과를 통합한다.
-
-    기본 원칙:
-    1. Qwen이 Finding을 반환하면 AI가 취약점으로 판단한 것으로 간주
-    2. AI가 명시적으로 FALSE_POSITIVE라고 판단한 경우 제외
-    3. Rule + AI가 같은 취약점을 가리키면 CONFIRMED
-    4. AI가 status/confidence를 반환하지 않는 경우
-       기본값을 CONFIRMED / HIGH로 사용
+    Rule Scanner + Qwen 분석 + Qwen 검증 결과를 통합한다.
     """
 
     merged = []
@@ -18,20 +15,24 @@ def merge_findings(rule_findings, ai_result):
     )
 
     # =====================================
-    # 1. AI Finding 등록
+    # 1. AI 분석 결과
     # =====================================
 
     for finding in ai_findings:
 
-        status = finding.get("status")
+        status = finding.get(
+            "status"
+        )
 
-        confidence = finding.get("confidence")
+        confidence = finding.get(
+            "confidence"
+        )
 
-        # AI가 명시적으로 오탐이라고 판단한 경우
+        # 명시적인 FALSE_POSITIVE
         if status == "FALSE_POSITIVE":
             continue
 
-        # 현재 Qwen 모델이 status를 반환하지 않는 경우
+        # 현재 Qwen이 status를 반환하지 않는 경우
         if status is None:
             status = "CONFIRMED"
 
@@ -46,8 +47,7 @@ def merge_findings(rule_findings, ai_result):
             "description": finding.get("description"),
             "reason": finding.get(
                 "reason",
-                "Qwen AI가 해당 코드에서 "
-                "보안 취약점을 확인했습니다."
+                "Qwen AI가 보안 취약점을 확인했습니다."
             ),
             "recommendation": finding.get(
                 "recommendation"
@@ -58,23 +58,64 @@ def merge_findings(rule_findings, ai_result):
         })
 
     # =====================================
-    # 2. Rule Scanner 결과와 AI 결과 비교
+    # 2. Rule Finding 처리
     # =====================================
 
     for rule in rule_findings:
+
+        # ---------------------------------
+        # Qwen 검증 결과 찾기
+        # ---------------------------------
+
+        validation = None
+
+        for result in validation_results:
+
+            if (
+                result["type"] == rule["type"]
+                and
+                result["line"] == rule["line"]
+            ):
+                validation = result
+                break
+
+        # =================================
+        # Qwen이 SAFE라고 판단
+        # =================================
+
+        if validation:
+
+            if validation["status"] == "SAFE":
+
+                print(
+                    f"[제외] "
+                    f"{rule['type']} "
+                    f"라인 {rule['line']} "
+                    f"→ Qwen SAFE"
+                )
+
+                continue
+
+        # =================================
+        # AI 분석과 Rule 결과 매칭
+        # =================================
 
         matched = False
 
         for finding in merged:
 
-            # 취약점 유형 확인
             if finding["type"] != rule["type"]:
                 continue
 
-            # 라인 번호 확인
             try:
-                ai_line = int(finding["line"])
-                rule_line = int(rule["line"])
+                ai_line = int(
+                    finding["line"]
+                )
+
+                rule_line = int(
+                    rule["line"]
+                )
+
             except (TypeError, ValueError):
                 continue
 
@@ -82,22 +123,39 @@ def merge_findings(rule_findings, ai_result):
 
                 matched = True
 
-                # Rule + AI로 탐지
                 finding["source"] = "RULE + AI"
 
-                # 두 분석기가 모두 동일한 취약점을 확인
                 finding["status"] = "CONFIRMED"
 
-                # Rule + AI 일치이므로 높은 신뢰도
                 finding["confidence"] = "HIGH"
 
                 break
 
         # =================================
-        # 3. Rule만 발견된 경우
+        # AI와 매칭되지 않은 Rule
         # =================================
 
         if not matched:
+
+            # Qwen이 REVIEW라고 판단
+            if (
+                validation
+                and
+                validation["status"] == "REVIEW"
+            ):
+
+                status = "REVIEW_REQUIRED"
+                confidence = "LOW"
+                reason = validation["reason"]
+
+            else:
+
+                status = "REVIEW_REQUIRED"
+                confidence = "LOW"
+                reason = (
+                    "Rule Scanner에서 의심 패턴이 "
+                    "탐지되었으나 AI 분석과 매칭되지 않았습니다."
+                )
 
             merged.append({
                 "type": rule["type"],
@@ -105,13 +163,12 @@ def merge_findings(rule_findings, ai_result):
                 "line": rule["line"],
                 "evidence": rule["evidence"],
                 "description": rule["description"],
-                "reason":
-                    "Rule Scanner에서 의심 패턴이 "
-                    "탐지되었으나 AI 분석과 매칭되지 않았습니다.",
-                "recommendation": rule["recommendation"],
+                "reason": reason,
+                "recommendation":
+                    rule["recommendation"],
                 "source": "RULE",
-                "confidence": "LOW",
-                "status": "REVIEW_REQUIRED"
+                "confidence": confidence,
+                "status": status
             })
 
     return merged
