@@ -15,3 +15,6 @@ HTML 보고서	⬜
 PDF 보고서	⬜
 JavaScript/JSP 테스트	⬜
 실제 Agent 형태	⬜
+
+
+python -u -c "from scanner.source_loader import load_source_files; print('LOADER START'); r=load_source_files('../data/source'); print('LOADER END:', len(r)); print([x['file_name'] for x in r])"
