@@ -4,9 +4,9 @@ from pathlib import Path
 import streamlit as st
 
 
-# --------------------------------------------------
-# 프로젝트 경로 설정
-# --------------------------------------------------
+# ==================================================
+# 프로젝트 경로
+# ==================================================
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 APP_DIR = BASE_DIR / "app"
@@ -15,12 +15,9 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 
-from agent.security_agent import SecurityAgent
-
-
-# --------------------------------------------------
-# 페이지 설정
-# --------------------------------------------------
+# ==================================================
+# Streamlit 페이지 설정
+# ==================================================
 
 st.set_page_config(
     page_title="AI Source Security Analyzer",
@@ -29,9 +26,9 @@ st.set_page_config(
 )
 
 
-# --------------------------------------------------
-# 제목
-# --------------------------------------------------
+# ==================================================
+# 화면
+# ==================================================
 
 st.title("🔐 AI Source Security Analyzer")
 
@@ -43,9 +40,9 @@ st.write(
 st.divider()
 
 
-# --------------------------------------------------
+# ==================================================
 # 점검 설정
-# --------------------------------------------------
+# ==================================================
 
 st.subheader("점검 설정")
 
@@ -53,29 +50,30 @@ source_dir = st.text_input(
     "소스 코드 경로",
     value=str(
         BASE_DIR / "data" / "source"
-    ),
-    help="보안점검할 소스코드 폴더를 입력하세요."
+    )
 )
-
 
 st.caption(
-    "현재는 전체 소스 점검만 지원합니다."
+    "현재 지원하는 점검 방식: 전체 소스 점검"
 )
 
 
-# --------------------------------------------------
+# ==================================================
 # 점검 시작
-# --------------------------------------------------
+# ==================================================
 
 if st.button(
     "🔍 보안 점검 시작",
-    type="primary",
-    use_container_width=True
+    type="primary"
 ):
 
     source_path = Path(
         source_dir
     )
+
+    # ----------------------------------------------
+    # 경로 확인
+    # ----------------------------------------------
 
     if not source_path.exists():
 
@@ -86,48 +84,66 @@ if st.button(
 
         st.stop()
 
+
     if not source_path.is_dir():
 
         st.error(
-            "소스 경로는 폴더여야 합니다."
+            "입력한 경로가 폴더가 아닙니다."
         )
 
         st.stop()
 
-    # --------------------------------------------------
+
+    # ----------------------------------------------
+    # Agent import
+    # ----------------------------------------------
+
+    try:
+
+        from agent.security_agent import SecurityAgent
+
+    except Exception as e:
+
+        st.error(
+            "Security Agent를 불러오지 못했습니다."
+        )
+
+        st.exception(e)
+
+        st.stop()
+
+
+    # ----------------------------------------------
     # Agent 실행
-    # --------------------------------------------------
+    # ----------------------------------------------
 
     st.info(
         "AI Security Agent가 "
         "소스코드를 분석하고 있습니다."
     )
 
-    progress = st.progress(
-        0
-    )
+    progress = st.progress(0)
 
-    status_text = st.empty()
-
-    status_text.write(
-        "보안점검을 시작합니다..."
-    )
-
-    progress.progress(
-        10
-    )
+    status = st.empty()
 
     try:
 
+        status.write(
+            "소스코드를 수집하고 있습니다..."
+        )
+
+        progress.progress(10)
+
+
         agent = SecurityAgent()
 
-        progress.progress(
-            20
+
+        status.write(
+            "Rule Scanner와 AI 분석을 시작합니다..."
         )
 
-        status_text.write(
-            "전체 소스코드를 분석하고 있습니다..."
-        )
+        progress.progress(20)
+
 
         result = agent.run(
             mode="full",
@@ -136,19 +152,19 @@ if st.button(
             )
         )
 
-        progress.progress(
-            100
-        )
 
-        status_text.write(
+        progress.progress(100)
+
+        status.success(
             "보안점검이 완료되었습니다."
         )
+
 
     except Exception as e:
 
         progress.empty()
 
-        status_text.empty()
+        status.empty()
 
         st.error(
             "보안점검 중 오류가 발생했습니다."
@@ -159,9 +175,9 @@ if st.button(
         st.stop()
 
 
-    # --------------------------------------------------
+    # ==================================================
     # 결과
-    # --------------------------------------------------
+    # ==================================================
 
     findings = result.get(
         "findings",
@@ -185,9 +201,9 @@ if st.button(
     )
 
 
-    # --------------------------------------------------
-    # 요약
-    # --------------------------------------------------
+    # ==================================================
+    # 결과 요약
+    # ==================================================
 
     critical_count = sum(
         1
@@ -246,9 +262,9 @@ if st.button(
     )
 
 
-    # --------------------------------------------------
+    # ==================================================
     # 취약점 목록
-    # --------------------------------------------------
+    # ==================================================
 
     st.subheader(
         "취약점 목록"
@@ -268,13 +284,13 @@ if st.button(
             start=1
         ):
 
-            severity = finding.get(
-                "severity",
+            vulnerability_type = finding.get(
+                "type",
                 "-"
             )
 
-            vulnerability_type = finding.get(
-                "type",
+            severity = finding.get(
+                "severity",
                 "-"
             )
 
@@ -288,47 +304,35 @@ if st.button(
                 "-"
             )
 
-            status = finding.get(
-                "status",
-                "-"
-            )
-
-            detection = finding.get(
-                "detection",
-                "-"
-            )
-
-            confidence = finding.get(
-                "confidence",
-                "-"
-            )
-
 
             with st.expander(
                 f"{index}. "
                 f"{vulnerability_type} "
-                f"[{severity}] - "
+                f"[{severity}] "
                 f"{file_name}:{line}"
             ):
 
                 col1, col2, col3 = st.columns(3)
 
                 col1.write(
-                    f"**심각도**  \n{severity}"
+                    f"**심각도**\n\n"
+                    f"{severity}"
                 )
 
                 col2.write(
-                    f"**상태**  \n{status}"
+                    f"**상태**\n\n"
+                    f"{finding.get('status', '-')}"
                 )
 
                 col3.write(
-                    f"**신뢰도**  \n{confidence}"
+                    f"**신뢰도**\n\n"
+                    f"{finding.get('confidence', '-')}"
                 )
 
 
                 st.write(
                     f"**탐지 방법:** "
-                    f"{detection}"
+                    f"{finding.get('detection', '-')}"
                 )
 
                 st.write(
@@ -391,9 +395,9 @@ if st.button(
                 )
 
 
-    # --------------------------------------------------
+    # ==================================================
     # HTML Report
-    # --------------------------------------------------
+    # ==================================================
 
     if report_file:
 
