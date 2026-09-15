@@ -238,8 +238,9 @@ if st.session_state.scanning:
         )
 
 
-        agent = SecurityAgent()
-
+        agent = SecurityAgent(
+            source_dir=str(source_path)
+        )
 
         progress.progress(30)
 
@@ -247,11 +248,7 @@ if st.session_state.scanning:
             "Rule Scanner로 소스코드를 분석하고 있습니다..."
         )
 
-
-        result = agent.run(
-            mode="full",
-            source_dir=str(source_path)
-        )
+        result = agent.run()
 
 
         progress.progress(100)
