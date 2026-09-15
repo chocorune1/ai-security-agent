@@ -1,5 +1,7 @@
 import sys
 from pathlib import Path
+import tkinter as tk
+from tkinter import filedialog
 
 import streamlit as st
 
@@ -16,7 +18,7 @@ if str(APP_DIR) not in sys.path:
 
 
 # ==================================================
-# Streamlit 페이지 설정
+# 페이지 설정
 # ==================================================
 
 st.set_page_config(
@@ -27,10 +29,61 @@ st.set_page_config(
 
 
 # ==================================================
-# 화면
+# Session State
 # ==================================================
 
-st.title("🔐 AI Source Security Analyzer")
+if "source_dir" not in st.session_state:
+    st.session_state.source_dir = str(
+        BASE_DIR / "data" / "source"
+    )
+
+if "scanning" not in st.session_state:
+    st.session_state.scanning = False
+
+
+# ==================================================
+# 폴더 선택
+# ==================================================
+
+def select_folder():
+
+    root = tk.Tk()
+
+    root.withdraw()
+    root.attributes(
+        "-topmost",
+        True
+    )
+
+    selected_folder = filedialog.askdirectory(
+        title="보안점검할 소스 폴더 선택"
+    )
+
+    root.destroy()
+
+    if selected_folder:
+
+        st.session_state.source_dir = (
+            selected_folder
+        )
+
+
+# ==================================================
+# 점검 시작
+# ==================================================
+
+def start_scan():
+
+    st.session_state.scanning = True
+
+
+# ==================================================
+# 제목
+# ==================================================
+
+st.title(
+    "🔐 AI Source Security Analyzer"
+)
 
 st.write(
     "Java / JavaScript / JSP 소스코드를 "
@@ -44,43 +97,104 @@ st.divider()
 # 점검 설정
 # ==================================================
 
-st.subheader("점검 설정")
-
-source_dir = st.text_input(
-    "소스 코드 경로",
-    value=str(
-        BASE_DIR / "data" / "source"
-    )
+st.subheader(
+    "점검 설정"
 )
+
+st.write(
+    "점검 방식"
+)
+
+st.radio(
+    "점검 방식",
+    [
+        "전체 소스 점검"
+    ],
+    index=0,
+    disabled=True,
+    label_visibility="collapsed"
+)
+
+
+# ==================================================
+# 소스 경로
+# ==================================================
+
+st.write(
+    "소스 코드 경로"
+)
+
+col1, col2 = st.columns(
+    [5, 1]
+)
+
+with col1:
+
+    st.text_input(
+        "소스 코드 경로",
+        key="source_dir",
+        disabled=st.session_state.scanning,
+        label_visibility="collapsed"
+    )
+
+with col2:
+
+    st.button(
+        "📁 폴더 선택",
+        on_click=select_folder,
+        disabled=st.session_state.scanning,
+        use_container_width=True
+    )
+
 
 st.caption(
-    "현재 지원하는 점검 방식: 전체 소스 점검"
+    "선택한 폴더와 하위 폴더에서 "
+    "Java / JavaScript / JSP 파일을 자동으로 탐색합니다."
+)
+
+
+st.divider()
+
+
+# ==================================================
+# 보안점검 버튼
+# ==================================================
+
+st.button(
+    "🔍 보안 점검 시작",
+    on_click=start_scan,
+    disabled=st.session_state.scanning,
+    type="primary",
+    use_container_width=True
 )
 
 
 # ==================================================
-# 점검 시작
+# Agent 실행
 # ==================================================
 
-if st.button(
-    "🔍 보안 점검 시작",
-    type="primary"
-):
+if st.session_state.scanning:
 
     source_path = Path(
-        source_dir
+        st.session_state.source_dir
     )
 
-    # ----------------------------------------------
+
+    # --------------------------------------------------
     # 경로 확인
-    # ----------------------------------------------
+    # --------------------------------------------------
 
     if not source_path.exists():
 
         st.error(
-            f"소스 경로를 찾을 수 없습니다.\n\n"
-            f"{source_path}"
+            "소스 경로를 찾을 수 없습니다."
         )
+
+        st.code(
+            str(source_path)
+        )
+
+        st.session_state.scanning = False
 
         st.stop()
 
@@ -91,16 +205,20 @@ if st.button(
             "입력한 경로가 폴더가 아닙니다."
         )
 
+        st.session_state.scanning = False
+
         st.stop()
 
 
-    # ----------------------------------------------
+    # --------------------------------------------------
     # Agent import
-    # ----------------------------------------------
+    # --------------------------------------------------
 
     try:
 
-        from agent.security_agent import SecurityAgent
+        from agent.security_agent import (
+            SecurityAgent
+        )
 
     except Exception as e:
 
@@ -110,39 +228,49 @@ if st.button(
 
         st.exception(e)
 
+        st.session_state.scanning = False
+
         st.stop()
 
 
-    # ----------------------------------------------
-    # Agent 실행
-    # ----------------------------------------------
+    # --------------------------------------------------
+    # 진행 상태
+    # --------------------------------------------------
 
-    st.info(
-        "AI Security Agent가 "
-        "소스코드를 분석하고 있습니다."
+    st.divider()
+
+    st.subheader(
+        "보안점검 진행 상황"
     )
 
-    progress = st.progress(0)
+    progress = st.progress(
+        10
+    )
 
     status = st.empty()
 
+    status.info(
+        "AI Security Agent를 준비하고 있습니다..."
+    )
+
+
+    # --------------------------------------------------
+    # Agent 실행
+    # --------------------------------------------------
+
     try:
 
-        status.write(
-            "소스코드를 수집하고 있습니다..."
+        progress.progress(
+            20
         )
 
-        progress.progress(10)
+        status.info(
+            "소스코드를 수집하고 보안점검을 "
+            "수행하고 있습니다..."
+        )
 
 
         agent = SecurityAgent()
-
-
-        status.write(
-            "Rule Scanner와 AI 분석을 시작합니다..."
-        )
-
-        progress.progress(20)
 
 
         result = agent.run(
@@ -153,7 +281,9 @@ if st.button(
         )
 
 
-        progress.progress(100)
+        progress.progress(
+            100
+        )
 
         status.success(
             "보안점검이 완료되었습니다."
@@ -172,12 +302,21 @@ if st.button(
 
         st.exception(e)
 
+        st.session_state.scanning = False
+
         st.stop()
 
 
-    # ==================================================
+    # --------------------------------------------------
+    # 점검 완료
+    # --------------------------------------------------
+
+    st.session_state.scanning = False
+
+
+    # --------------------------------------------------
     # 결과
-    # ==================================================
+    # --------------------------------------------------
 
     findings = result.get(
         "findings",
@@ -234,7 +373,9 @@ if st.button(
     )
 
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5 = st.columns(
+        5
+    )
 
     col1.metric(
         "분석 파일",
@@ -312,7 +453,9 @@ if st.button(
                 f"{file_name}:{line}"
             ):
 
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3 = st.columns(
+                    3
+                )
 
                 col1.write(
                     f"**심각도**\n\n"
