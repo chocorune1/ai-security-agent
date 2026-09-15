@@ -33,13 +33,17 @@ class SecurityAgent:
             self.source_dir
         )
 
+        # 실제 Agent가 수집한 소스 파일 수
+        source_count = len(sources)
+
         print(
-            f"  → {len(sources)}개 파일 수집"
+            f"  → {source_count}개 파일 수집"
         )
 
         if not sources:
             print("분석할 소스코드가 없습니다.")
             return {
+                "source_count": 0,
                 "findings": [],
                 "report_file": None
             }
@@ -226,6 +230,11 @@ class SecurityAgent:
         print("=" * 70)
 
         print(
+            f"분석 파일: "
+            f"{source_count}개"
+        )
+
+        print(
             f"최종 취약점: "
             f"{len(final_findings)}개"
         )
@@ -236,6 +245,7 @@ class SecurityAgent:
         )
 
         return {
+            "source_count": source_count,
             "findings": final_findings,
             "report_file": report_file
         }
