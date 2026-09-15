@@ -6,9 +6,9 @@ from tkinter import filedialog
 import streamlit as st
 
 
-# ==================================================
-# 프로젝트 경로
-# ==================================================
+# ============================================================
+# 경로 설정
+# ============================================================
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 APP_DIR = BASE_DIR / "app"
@@ -17,9 +17,9 @@ if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
 
 
-# ==================================================
-# 페이지 설정
-# ==================================================
+# ============================================================
+# Streamlit 기본 설정
+# ============================================================
 
 st.set_page_config(
     page_title="AI Source Security Analyzer",
@@ -28,9 +28,9 @@ st.set_page_config(
 )
 
 
-# ==================================================
+# ============================================================
 # Session State
-# ==================================================
+# ============================================================
 
 if "source_dir" not in st.session_state:
     st.session_state.source_dir = str(
@@ -40,20 +40,19 @@ if "source_dir" not in st.session_state:
 if "scanning" not in st.session_state:
     st.session_state.scanning = False
 
+if "scan_result" not in st.session_state:
+    st.session_state.scan_result = None
 
-# ==================================================
+
+# ============================================================
 # 폴더 선택
-# ==================================================
+# ============================================================
 
 def select_folder():
 
     root = tk.Tk()
-
     root.withdraw()
-    root.attributes(
-        "-topmost",
-        True
-    )
+    root.attributes("-topmost", True)
 
     selected_folder = filedialog.askdirectory(
         title="보안점검할 소스 폴더 선택"
@@ -62,28 +61,23 @@ def select_folder():
     root.destroy()
 
     if selected_folder:
-
-        st.session_state.source_dir = (
-            selected_folder
-        )
+        st.session_state.source_dir = selected_folder
 
 
-# ==================================================
-# 점검 시작
-# ==================================================
+# ============================================================
+# 보안점검 시작
+# ============================================================
 
 def start_scan():
-
     st.session_state.scanning = True
+    st.session_state.scan_result = None
 
 
-# ==================================================
-# 제목
-# ==================================================
+# ============================================================
+# 화면
+# ============================================================
 
-st.title(
-    "🔐 AI Source Security Analyzer"
-)
+st.title("🔐 AI Source Security Analyzer")
 
 st.write(
     "Java / JavaScript / JSP 소스코드를 "
@@ -93,40 +87,13 @@ st.write(
 st.divider()
 
 
-# ==================================================
-# 점검 설정
-# ==================================================
+# ============================================================
+# 소스 코드 경로
+# ============================================================
 
-st.subheader(
-    "점검 설정"
-)
+st.subheader("소스 코드")
 
-st.write(
-    "점검 방식"
-)
-
-st.radio(
-    "점검 방식",
-    [
-        "전체 소스 점검"
-    ],
-    index=0,
-    disabled=True,
-    label_visibility="collapsed"
-)
-
-
-# ==================================================
-# 소스 경로
-# ==================================================
-
-st.write(
-    "소스 코드 경로"
-)
-
-col1, col2 = st.columns(
-    [5, 1]
-)
+col1, col2 = st.columns([5, 1])
 
 with col1:
 
@@ -136,6 +103,7 @@ with col1:
         disabled=st.session_state.scanning,
         label_visibility="collapsed"
     )
+
 
 with col2:
 
@@ -156,9 +124,9 @@ st.caption(
 st.divider()
 
 
-# ==================================================
-# 보안점검 버튼
-# ==================================================
+# ============================================================
+# 보안점검 시작 버튼
+# ============================================================
 
 st.button(
     "🔍 보안 점검 시작",
@@ -169,9 +137,9 @@ st.button(
 )
 
 
-# ==================================================
-# Agent 실행
-# ==================================================
+# ============================================================
+# 보안점검 실행
+# ============================================================
 
 if st.session_state.scanning:
 
@@ -180,9 +148,9 @@ if st.session_state.scanning:
     )
 
 
-    # --------------------------------------------------
+    # --------------------------------------------------------
     # 경로 확인
-    # --------------------------------------------------
+    # --------------------------------------------------------
 
     if not source_path.exists():
 
@@ -205,20 +173,22 @@ if st.session_state.scanning:
             "입력한 경로가 폴더가 아닙니다."
         )
 
+        st.code(
+            str(source_path)
+        )
+
         st.session_state.scanning = False
 
         st.stop()
 
 
-    # --------------------------------------------------
-    # Agent import
-    # --------------------------------------------------
+    # --------------------------------------------------------
+    # Security Agent Import
+    # --------------------------------------------------------
 
     try:
 
-        from agent.security_agent import (
-            SecurityAgent
-        )
+        from agent.security_agent import SecurityAgent
 
     except Exception as e:
 
@@ -233,9 +203,9 @@ if st.session_state.scanning:
         st.stop()
 
 
-    # --------------------------------------------------
-    # 진행 상태
-    # --------------------------------------------------
+    # --------------------------------------------------------
+    # 진행 화면
+    # --------------------------------------------------------
 
     st.divider()
 
@@ -243,51 +213,57 @@ if st.session_state.scanning:
         "보안점검 진행 상황"
     )
 
-    progress = st.progress(
-        10
-    )
+    progress = st.progress(0)
 
     status = st.empty()
 
-    status.info(
-        "AI Security Agent를 준비하고 있습니다..."
-    )
 
-
-    # --------------------------------------------------
+    # --------------------------------------------------------
     # Agent 실행
-    # --------------------------------------------------
+    # --------------------------------------------------------
 
     try:
 
-        progress.progress(
-            20
-        )
+        progress.progress(10)
 
         status.info(
-            "소스코드를 수집하고 보안점검을 "
-            "수행하고 있습니다..."
+            "AI Security Agent를 준비하고 있습니다..."
+        )
+
+
+        progress.progress(20)
+
+        status.info(
+            "소스코드를 수집하고 있습니다..."
         )
 
 
         agent = SecurityAgent()
 
 
+        progress.progress(30)
+
+        status.info(
+            "Rule Scanner로 소스코드를 분석하고 있습니다..."
+        )
+
+
         result = agent.run(
             mode="full",
-            source_dir=str(
-                source_path
-            )
+            source_dir=str(source_path)
         )
 
 
-        progress.progress(
-            100
-        )
+        progress.progress(100)
 
         status.success(
             "보안점검이 완료되었습니다."
         )
+
+
+        st.session_state.scan_result = result
+
+        st.session_state.scanning = False
 
 
     except Exception as e:
@@ -307,16 +283,14 @@ if st.session_state.scanning:
         st.stop()
 
 
-    # --------------------------------------------------
-    # 점검 완료
-    # --------------------------------------------------
+# ============================================================
+# 결과 표시
+# ============================================================
 
-    st.session_state.scanning = False
+result = st.session_state.scan_result
 
 
-    # --------------------------------------------------
-    # 결과
-    # --------------------------------------------------
+if result is not None:
 
     findings = result.get(
         "findings",
@@ -333,6 +307,10 @@ if st.session_state.scanning:
     )
 
 
+    # ========================================================
+    # 결과 요약
+    # ========================================================
+
     st.divider()
 
     st.subheader(
@@ -340,62 +318,60 @@ if st.session_state.scanning:
     )
 
 
-    # ==================================================
-    # 결과 요약
-    # ==================================================
-
     critical_count = sum(
         1
         for finding in findings
-        if finding.get("severity")
-        == "CRITICAL"
+        if finding.get("severity") == "CRITICAL"
     )
+
 
     high_count = sum(
         1
         for finding in findings
-        if finding.get("severity")
-        == "HIGH"
+        if finding.get("severity") == "HIGH"
     )
+
 
     medium_count = sum(
         1
         for finding in findings
-        if finding.get("severity")
-        == "MEDIUM"
+        if finding.get("severity") == "MEDIUM"
     )
+
 
     low_count = sum(
         1
         for finding in findings
-        if finding.get("severity")
-        == "LOW"
+        if finding.get("severity") == "LOW"
     )
 
 
-    col1, col2, col3, col4, col5 = st.columns(
-        5
-    )
+    col1, col2, col3, col4, col5 = st.columns(5)
+
 
     col1.metric(
         "분석 파일",
         source_count
     )
 
+
     col2.metric(
         "전체 취약점",
         len(findings)
     )
+
 
     col3.metric(
         "Critical",
         critical_count
     )
 
+
     col4.metric(
         "High",
         high_count
     )
+
 
     col5.metric(
         "Medium",
@@ -403,9 +379,9 @@ if st.session_state.scanning:
     )
 
 
-    # ==================================================
+    # ========================================================
     # 취약점 목록
-    # ==================================================
+    # ========================================================
 
     st.subheader(
         "취약점 목록"
@@ -417,6 +393,7 @@ if st.session_state.scanning:
         st.success(
             "취약점이 발견되지 않았습니다."
         )
+
 
     else:
 
@@ -453,24 +430,46 @@ if st.session_state.scanning:
                 f"{file_name}:{line}"
             ):
 
-                col1, col2, col3 = st.columns(
-                    3
-                )
+                col1, col2, col3 = st.columns(3)
 
-                col1.write(
-                    f"**심각도**\n\n"
-                    f"{severity}"
-                )
 
-                col2.write(
-                    f"**상태**\n\n"
-                    f"{finding.get('status', '-')}"
-                )
+                with col1:
 
-                col3.write(
-                    f"**신뢰도**\n\n"
-                    f"{finding.get('confidence', '-')}"
-                )
+                    st.write(
+                        "**심각도**"
+                    )
+
+                    st.write(
+                        severity
+                    )
+
+
+                with col2:
+
+                    st.write(
+                        "**상태**"
+                    )
+
+                    st.write(
+                        finding.get(
+                            "status",
+                            "-"
+                        )
+                    )
+
+
+                with col3:
+
+                    st.write(
+                        "**신뢰도**"
+                    )
+
+                    st.write(
+                        finding.get(
+                            "confidence",
+                            "-"
+                        )
+                    )
 
 
                 st.write(
@@ -478,10 +477,12 @@ if st.session_state.scanning:
                     f"{finding.get('detection', '-')}"
                 )
 
+
                 st.write(
                     f"**파일:** "
                     f"{file_name}"
                 )
+
 
                 st.write(
                     f"**라인:** "
@@ -492,6 +493,7 @@ if st.session_state.scanning:
                 st.markdown(
                     "#### 🔎 증거"
                 )
+
 
                 st.code(
                     finding.get(
@@ -506,6 +508,7 @@ if st.session_state.scanning:
                     "#### 설명"
                 )
 
+
                 st.write(
                     finding.get(
                         "description",
@@ -517,6 +520,7 @@ if st.session_state.scanning:
                 st.markdown(
                     "#### AI 판단 근거"
                 )
+
 
                 st.write(
                     finding.get(
@@ -530,6 +534,7 @@ if st.session_state.scanning:
                     "#### 🛠 개선 방법"
                 )
 
+
                 st.write(
                     finding.get(
                         "recommendation",
@@ -538,9 +543,9 @@ if st.session_state.scanning:
                 )
 
 
-    # ==================================================
-    # HTML Report
-    # ==================================================
+    # ========================================================
+    # HTML 리포트
+    # ========================================================
 
     if report_file:
 
@@ -550,9 +555,11 @@ if st.session_state.scanning:
             "HTML 리포트"
         )
 
+
         st.success(
             "HTML 보안 리포트가 생성되었습니다."
         )
+
 
         st.code(
             str(report_file),
