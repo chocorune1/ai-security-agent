@@ -1,0 +1,241 @@
+from scanner.source_loader import load_source_files
+from scanner.rule_analyzer import analyze_source
+
+from analyzer.security_analyzer import (
+    analyze_with_qwen,
+    validate_rule_finding
+)
+
+from analyzer.finding_merger import merge_findings
+from report.html_report import generate_html_report
+
+
+class SecurityAgent:
+
+    def __init__(self, source_dir="../data/source"):
+        self.source_dir = source_dir
+
+    def run(self):
+
+        print()
+        print("=" * 70)
+        print("AI Security Agent 시작")
+        print("=" * 70)
+
+        # --------------------------------------------------
+        # 1. Source Loader
+        # --------------------------------------------------
+
+        print()
+        print("[1/6] 소스코드 수집")
+
+        sources = load_source_files(
+            self.source_dir
+        )
+
+        print(
+            f"  → {len(sources)}개 파일 수집"
+        )
+
+        if not sources:
+            print("분석할 소스코드가 없습니다.")
+            return {
+                "findings": [],
+                "report_file": None
+            }
+
+        # --------------------------------------------------
+        # 2. Rule Scanner
+        # --------------------------------------------------
+
+        print()
+        print("[2/6] Rule 기반 보안점검")
+
+        rule_findings = []
+
+        for source in sources:
+
+            print(
+                f"  분석 중: "
+                f"{source['file_name']}"
+            )
+
+            findings = analyze_source(
+                source
+            )
+
+            print(
+                f"  → {len(findings)}개 발견"
+            )
+
+            rule_findings.extend(
+                findings
+            )
+
+        print(
+            f"  → Rule Scanner 총 "
+            f"{len(rule_findings)}개"
+        )
+
+        # --------------------------------------------------
+        # 3. Qwen AI Analysis
+        # --------------------------------------------------
+
+        print()
+        print("[3/6] Qwen AI 보안 분석")
+
+        ai_results = []
+
+        for source in sources:
+
+            print(
+                f"  Qwen 분석 중: "
+                f"{source['file_name']}"
+            )
+
+            source_rule_findings = [
+                finding
+                for finding in rule_findings
+                if finding.get("file")
+                == source["file_name"]
+            ]
+
+            result = analyze_with_qwen(
+                source,
+                source_rule_findings
+            )
+
+            if isinstance(result, list):
+                ai_results.extend(
+                    result
+                )
+
+        print(
+            f"  → Qwen 분석 결과 "
+            f"{len(ai_results)}개"
+        )
+
+        # --------------------------------------------------
+        # 4. Rule Finding Validation
+        # --------------------------------------------------
+
+        print()
+        print("[4/6] Rule 탐지 결과 AI 검증")
+
+        validation_results = []
+
+        for finding in rule_findings:
+
+            print(
+                f"  검증 중: "
+                f"{finding.get('type')} / "
+                f"{finding.get('file')}:"
+                f"{finding.get('line')}"
+            )
+
+            source = None
+
+            for item in sources:
+
+                if (
+                    item.get("file_name")
+                    == finding.get("file")
+                ):
+                    source = item
+                    break
+
+            if source is None:
+                continue
+
+            validation = validate_rule_finding(
+                source,
+                finding
+            )
+
+            if isinstance(
+                validation,
+                dict
+            ):
+
+                if not validation.get(
+                    "type"
+                ):
+                    validation["type"] = (
+                        finding.get("type")
+                    )
+
+                if not validation.get(
+                    "file"
+                ):
+                    validation["file"] = (
+                        finding.get("file")
+                    )
+
+                if validation.get(
+                    "line"
+                ) is None:
+                    validation["line"] = (
+                        finding.get("line")
+                    )
+
+                validation_results.append(
+                    validation
+                )
+
+        print(
+            f"  → 검증 완료 "
+            f"{len(validation_results)}개"
+        )
+
+        # --------------------------------------------------
+        # 5. Finding Merge
+        # --------------------------------------------------
+
+        print()
+        print("[5/6] 보안점검 결과 통합")
+
+        final_findings = merge_findings(
+            rule_findings,
+            ai_results,
+            validation_results
+        )
+
+        print(
+            f"  → 최종 취약점 "
+            f"{len(final_findings)}개"
+        )
+
+        # --------------------------------------------------
+        # 6. Report
+        # --------------------------------------------------
+
+        print()
+        print("[6/6] 보안 리포트 생성")
+
+        report_file = generate_html_report(
+            final_findings
+        )
+
+        print(
+            f"  → 리포트 생성 완료"
+        )
+
+        print()
+        print("=" * 70)
+        print("AI Security Agent 분석 완료")
+        print("=" * 70)
+
+        print(
+            f"최종 취약점: "
+            f"{len(final_findings)}개"
+        )
+
+        print(
+            f"HTML 리포트: "
+            f"{report_file}"
+        )
+
+        return {
+            "findings": final_findings,
+            "report_file": report_file
+        }
