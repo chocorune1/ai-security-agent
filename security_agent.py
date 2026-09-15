@@ -15,7 +15,19 @@ class SecurityAgent:
     def __init__(self, source_dir="../data/source"):
         self.source_dir = source_dir
 
-    def run(self):
+    def run(self, progress_callback=None):
+
+        def update_progress(percent, message):
+            """
+            웹 UI 등에 현재 진행상황을 전달합니다.
+            callback이 없어도 기존 CLI 실행에는 영향을 주지 않습니다.
+            """
+
+            if progress_callback is not None:
+                progress_callback(
+                    percent,
+                    message
+                )
 
         print()
         print("=" * 70)
@@ -26,6 +38,11 @@ class SecurityAgent:
         # 1. Source Loader
         # --------------------------------------------------
 
+        update_progress(
+            5,
+            "소스코드 수집을 준비하고 있습니다..."
+        )
+
         print()
         print("[1/6] 소스코드 수집")
 
@@ -33,15 +50,26 @@ class SecurityAgent:
             self.source_dir
         )
 
-        # 실제 Agent가 수집한 소스 파일 수
         source_count = len(sources)
 
         print(
             f"  → {source_count}개 파일 수집"
         )
 
+        update_progress(
+            15,
+            f"소스코드 수집 완료 - {source_count}개 파일"
+        )
+
         if not sources:
+
             print("분석할 소스코드가 없습니다.")
+
+            update_progress(
+                100,
+                "분석할 소스코드가 없습니다."
+            )
+
             return {
                 "source_count": 0,
                 "findings": [],
@@ -51,6 +79,11 @@ class SecurityAgent:
         # --------------------------------------------------
         # 2. Rule Scanner
         # --------------------------------------------------
+
+        update_progress(
+            20,
+            "Rule Scanner로 소스코드를 분석하고 있습니다..."
+        )
 
         print()
         print("[2/6] Rule 기반 보안점검")
@@ -81,16 +114,32 @@ class SecurityAgent:
             f"{len(rule_findings)}개"
         )
 
+        update_progress(
+            35,
+            f"Rule Scanner 완료 - "
+            f"{len(rule_findings)}개 항목 발견"
+        )
+
         # --------------------------------------------------
         # 3. Qwen AI Analysis
         # --------------------------------------------------
+
+        update_progress(
+            40,
+            "Qwen AI가 소스코드의 보안 취약점을 분석하고 있습니다..."
+        )
 
         print()
         print("[3/6] Qwen AI 보안 분석")
 
         ai_results = []
 
-        for source in sources:
+        total_sources = len(sources)
+
+        for index, source in enumerate(
+            sources,
+            start=1
+        ):
 
             print(
                 f"  Qwen 분석 중: "
@@ -114,21 +163,49 @@ class SecurityAgent:
                     result
                 )
 
+            # Qwen 단계는 40~60%
+            qwen_progress = 40 + int(
+                (index / total_sources) * 20
+            )
+
+            update_progress(
+                qwen_progress,
+                f"Qwen AI 분석 중 "
+                f"({index}/{total_sources}) - "
+                f"{source['file_name']}"
+            )
+
         print(
             f"  → Qwen 분석 결과 "
             f"{len(ai_results)}개"
+        )
+
+        update_progress(
+            60,
+            f"Qwen AI 분석 완료 - "
+            f"{len(ai_results)}개 결과"
         )
 
         # --------------------------------------------------
         # 4. Rule Finding Validation
         # --------------------------------------------------
 
+        update_progress(
+            65,
+            "Rule 탐지 결과를 AI가 검증하고 있습니다..."
+        )
+
         print()
         print("[4/6] Rule 탐지 결과 AI 검증")
 
         validation_results = []
 
-        for finding in rule_findings:
+        total_findings = len(rule_findings)
+
+        for index, finding in enumerate(
+            rule_findings,
+            start=1
+        ):
 
             print(
                 f"  검증 중: "
@@ -186,14 +263,43 @@ class SecurityAgent:
                     validation
                 )
 
+            # 검증 단계 65~75%
+            if total_findings > 0:
+
+                validation_progress = 65 + int(
+                    (index / total_findings) * 10
+                )
+
+            else:
+
+                validation_progress = 75
+
+            update_progress(
+                validation_progress,
+                f"AI 검증 중 "
+                f"({index}/{total_findings}) - "
+                f"{finding.get('type')}"
+            )
+
         print(
             f"  → 검증 완료 "
+            f"{len(validation_results)}개"
+        )
+
+        update_progress(
+            75,
+            f"AI 검증 완료 - "
             f"{len(validation_results)}개"
         )
 
         # --------------------------------------------------
         # 5. Finding Merge
         # --------------------------------------------------
+
+        update_progress(
+            80,
+            "Rule과 AI 분석 결과를 통합하고 있습니다..."
+        )
 
         print()
         print("[5/6] 보안점검 결과 통합")
@@ -209,9 +315,20 @@ class SecurityAgent:
             f"{len(final_findings)}개"
         )
 
+        update_progress(
+            85,
+            f"보안점검 결과 통합 완료 - "
+            f"최종 취약점 {len(final_findings)}개"
+        )
+
         # --------------------------------------------------
         # 6. Report
         # --------------------------------------------------
+
+        update_progress(
+            90,
+            "HTML 보안 리포트를 생성하고 있습니다..."
+        )
 
         print()
         print("[6/6] 보안 리포트 생성")
@@ -222,6 +339,11 @@ class SecurityAgent:
 
         print(
             f"  → 리포트 생성 완료"
+        )
+
+        update_progress(
+            100,
+            "보안점검이 완료되었습니다."
         )
 
         print()
