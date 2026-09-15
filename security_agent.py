@@ -18,11 +18,6 @@ class SecurityAgent:
     def run(self, progress_callback=None):
 
         def update_progress(percent, message):
-            """
-            웹 UI 등에 현재 진행상황을 전달합니다.
-            callback이 없어도 기존 CLI 실행에는 영향을 주지 않습니다.
-            """
-
             if progress_callback is not None:
                 progress_callback(
                     percent,
@@ -34,13 +29,13 @@ class SecurityAgent:
         print("AI Security Agent 시작")
         print("=" * 70)
 
-        # --------------------------------------------------
+        # ==================================================
         # 1. Source Loader
-        # --------------------------------------------------
+        # ==================================================
 
         update_progress(
             5,
-            "소스코드 수집을 준비하고 있습니다..."
+            "소스코드를 수집하고 있습니다..."
         )
 
         print()
@@ -58,7 +53,8 @@ class SecurityAgent:
 
         update_progress(
             15,
-            f"소스코드 수집 완료 - {source_count}개 파일"
+            f"소스코드 수집 완료 - "
+            f"{source_count}개 파일"
         )
 
         if not sources:
@@ -76,25 +72,40 @@ class SecurityAgent:
                 "report_file": None
             }
 
-        # --------------------------------------------------
+        # ==================================================
         # 2. Rule Scanner
-        # --------------------------------------------------
-
-        update_progress(
-            20,
-            "Rule Scanner로 소스코드를 분석하고 있습니다..."
-        )
+        # ==================================================
 
         print()
         print("[2/6] Rule 기반 보안점검")
 
         rule_findings = []
 
-        for source in sources:
+        total_sources = len(sources)
+
+        for index, source in enumerate(
+            sources,
+            start=1
+        ):
+
+            file_name = source["file_name"]
+
+            # 20~35%
+            rule_progress = 20 + int(
+                (index - 1)
+                / total_sources
+                * 15
+            )
+
+            update_progress(
+                rule_progress,
+                f"Rule Scanner 분석 중 "
+                f"({index}/{total_sources}) - "
+                f"{file_name}"
+            )
 
             print(
-                f"  분석 중: "
-                f"{source['file_name']}"
+                f"  분석 중: {file_name}"
             )
 
             findings = analyze_source(
@@ -109,6 +120,20 @@ class SecurityAgent:
                 findings
             )
 
+            # 파일 하나 완료 후 진행률
+            rule_progress = 20 + int(
+                index
+                / total_sources
+                * 15
+            )
+
+            update_progress(
+                rule_progress,
+                f"Rule Scanner 분석 완료 "
+                f"({index}/{total_sources}) - "
+                f"{file_name}"
+            )
+
         print(
             f"  → Rule Scanner 총 "
             f"{len(rule_findings)}개"
@@ -120,14 +145,9 @@ class SecurityAgent:
             f"{len(rule_findings)}개 항목 발견"
         )
 
-        # --------------------------------------------------
+        # ==================================================
         # 3. Qwen AI Analysis
-        # --------------------------------------------------
-
-        update_progress(
-            40,
-            "Qwen AI가 소스코드의 보안 취약점을 분석하고 있습니다..."
-        )
+        # ==================================================
 
         print()
         print("[3/6] Qwen AI 보안 분석")
@@ -141,16 +161,31 @@ class SecurityAgent:
             start=1
         ):
 
+            file_name = source["file_name"]
+
+            # 40~60%
+            qwen_progress = 40 + int(
+                (index - 1)
+                / total_sources
+                * 20
+            )
+
+            update_progress(
+                qwen_progress,
+                f"Qwen AI 분석 중 "
+                f"({index}/{total_sources}) - "
+                f"{file_name}"
+            )
+
             print(
-                f"  Qwen 분석 중: "
-                f"{source['file_name']}"
+                f"  Qwen 분석 중: {file_name}"
             )
 
             source_rule_findings = [
                 finding
                 for finding in rule_findings
                 if finding.get("file")
-                == source["file_name"]
+                == file_name
             ]
 
             result = analyze_with_qwen(
@@ -159,20 +194,23 @@ class SecurityAgent:
             )
 
             if isinstance(result, list):
+
                 ai_results.extend(
                     result
                 )
 
-            # Qwen 단계는 40~60%
+            # 파일 하나 완료
             qwen_progress = 40 + int(
-                (index / total_sources) * 20
+                index
+                / total_sources
+                * 20
             )
 
             update_progress(
                 qwen_progress,
-                f"Qwen AI 분석 중 "
+                f"Qwen AI 분석 완료 "
                 f"({index}/{total_sources}) - "
-                f"{source['file_name']}"
+                f"{file_name}"
             )
 
         print(
@@ -186,14 +224,9 @@ class SecurityAgent:
             f"{len(ai_results)}개 결과"
         )
 
-        # --------------------------------------------------
+        # ==================================================
         # 4. Rule Finding Validation
-        # --------------------------------------------------
-
-        update_progress(
-            65,
-            "Rule 탐지 결과를 AI가 검증하고 있습니다..."
-        )
+        # ==================================================
 
         print()
         print("[4/6] Rule 탐지 결과 AI 검증")
@@ -202,84 +235,99 @@ class SecurityAgent:
 
         total_findings = len(rule_findings)
 
-        for index, finding in enumerate(
-            rule_findings,
-            start=1
-        ):
-
-            print(
-                f"  검증 중: "
-                f"{finding.get('type')} / "
-                f"{finding.get('file')}:"
-                f"{finding.get('line')}"
-            )
-
-            source = None
-
-            for item in sources:
-
-                if (
-                    item.get("file_name")
-                    == finding.get("file")
-                ):
-                    source = item
-                    break
-
-            if source is None:
-                continue
-
-            validation = validate_rule_finding(
-                source,
-                finding
-            )
-
-            if isinstance(
-                validation,
-                dict
-            ):
-
-                if not validation.get(
-                    "type"
-                ):
-                    validation["type"] = (
-                        finding.get("type")
-                    )
-
-                if not validation.get(
-                    "file"
-                ):
-                    validation["file"] = (
-                        finding.get("file")
-                    )
-
-                if validation.get(
-                    "line"
-                ) is None:
-                    validation["line"] = (
-                        finding.get("line")
-                    )
-
-                validation_results.append(
-                    validation
-                )
-
-            # 검증 단계 65~75%
-            if total_findings > 0:
-
-                validation_progress = 65 + int(
-                    (index / total_findings) * 10
-                )
-
-            else:
-
-                validation_progress = 75
+        if total_findings == 0:
 
             update_progress(
-                validation_progress,
-                f"AI 검증 중 "
-                f"({index}/{total_findings}) - "
-                f"{finding.get('type')}"
+                75,
+                "검증할 Rule 탐지 결과가 없습니다."
             )
+
+        else:
+
+            for index, finding in enumerate(
+                rule_findings,
+                start=1
+            ):
+
+                finding_type = finding.get(
+                    "type"
+                )
+
+                file_name = finding.get(
+                    "file"
+                )
+
+                line = finding.get(
+                    "line"
+                )
+
+                validation_progress = 60 + int(
+                    index
+                    / total_findings
+                    * 15
+                )
+
+                update_progress(
+                    validation_progress,
+                    f"AI 검증 중 "
+                    f"({index}/{total_findings}) - "
+                    f"{finding_type}"
+                )
+
+                print(
+                    f"  검증 중: "
+                    f"{finding_type} / "
+                    f"{file_name}:{line}"
+                )
+
+                source = None
+
+                for item in sources:
+
+                    if (
+                        item.get("file_name")
+                        == file_name
+                    ):
+                        source = item
+                        break
+
+                if source is None:
+                    continue
+
+                validation = validate_rule_finding(
+                    source,
+                    finding
+                )
+
+                if isinstance(
+                    validation,
+                    dict
+                ):
+
+                    if not validation.get(
+                        "type"
+                    ):
+                        validation["type"] = (
+                            finding.get("type")
+                        )
+
+                    if not validation.get(
+                        "file"
+                    ):
+                        validation["file"] = (
+                            finding.get("file")
+                        )
+
+                    if validation.get(
+                        "line"
+                    ) is None:
+                        validation["line"] = (
+                            finding.get("line")
+                        )
+
+                    validation_results.append(
+                        validation
+                    )
 
         print(
             f"  → 검증 완료 "
@@ -292,9 +340,9 @@ class SecurityAgent:
             f"{len(validation_results)}개"
         )
 
-        # --------------------------------------------------
+        # ==================================================
         # 5. Finding Merge
-        # --------------------------------------------------
+        # ==================================================
 
         update_progress(
             80,
@@ -317,13 +365,13 @@ class SecurityAgent:
 
         update_progress(
             85,
-            f"보안점검 결과 통합 완료 - "
+            f"결과 통합 완료 - "
             f"최종 취약점 {len(final_findings)}개"
         )
 
-        # --------------------------------------------------
+        # ==================================================
         # 6. Report
-        # --------------------------------------------------
+        # ==================================================
 
         update_progress(
             90,
@@ -338,7 +386,7 @@ class SecurityAgent:
         )
 
         print(
-            f"  → 리포트 생성 완료"
+            "  → 리포트 생성 완료"
         )
 
         update_progress(
