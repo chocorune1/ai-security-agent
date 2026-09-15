@@ -12,13 +12,13 @@ def build_rag_context(source, rule_findings):
 
     query_parts = []
 
-    # Rule Scanner에서 발견한 취약점 유형
     for finding in rule_findings:
-        query_parts.append(
-            finding["type"]
-        )
 
-    # Rule 결과가 없더라도 소스 언어를 검색에 활용
+        if finding.get("type"):
+            query_parts.append(
+                finding["type"]
+            )
+
     query_parts.append(
         f"{source['extension']} security vulnerability"
     )
@@ -44,11 +44,16 @@ def build_rag_context(source, rule_findings):
 
     for index, document in enumerate(documents):
 
-        source_name = (
-            metadatas[index]["source"]
-            if index < len(metadatas)
-            else "unknown"
-        )
+        if index < len(metadatas):
+
+            source_name = metadatas[index].get(
+                "source",
+                "unknown"
+            )
+
+        else:
+
+            source_name = "unknown"
 
         rag_context.append(
             f"""
@@ -69,25 +74,39 @@ def analyze_with_qwen(source, rule_findings):
     """
     소스코드 + Rule Scanner + RAG 지식을
     Qwen에게 전달하여 보안 분석을 수행한다.
+
+    최종 반환값:
+        list
     """
 
     file_name = source["file_name"]
     extension = source["extension"]
     content = source["content"]
 
-    # -----------------------------------
-    # Rule 결과 정리
-    # -----------------------------------
+    # ==================================================
+    # 1. Rule 결과 정리
+    # ==================================================
 
     rule_summary = []
 
     for finding in rule_findings:
 
         rule_summary.append({
-            "type": finding["type"],
-            "severity": finding["severity"],
-            "line": finding["line"],
-            "evidence": finding["evidence"]
+            "type": finding.get(
+                "type",
+                ""
+            ),
+            "severity": finding.get(
+                "severity",
+                "MEDIUM"
+            ),
+            "line": finding.get(
+                "line"
+            ),
+            "evidence": finding.get(
+                "evidence",
+                ""
+            )
         })
 
     rule_summary_text = json.dumps(
@@ -96,18 +115,18 @@ def analyze_with_qwen(source, rule_findings):
         indent=2
     )
 
-    # -----------------------------------
-    # RAG 검색
-    # -----------------------------------
+    # ==================================================
+    # 2. RAG 검색
+    # ==================================================
 
     rag_context = build_rag_context(
         source,
         rule_findings
     )
 
-    # -----------------------------------
-    # Qwen Prompt
-    # -----------------------------------
+    # ==================================================
+    # 3. Qwen Prompt
+    # ==================================================
 
     prompt = f"""
 당신은 소프트웨어 보안 취약점 분석 전문가입니다.
@@ -200,10 +219,16 @@ CONFIRMED로 판단하세요.
 출력 형식
 ==============================
 
-반드시 아래 JSON 형식으로만 답변하세요.
+반드시 JSON 형식으로만 답변하세요.
+
+파일명은 반드시 다음 값을 사용하세요.
+
+"{file_name}"
+
+형식:
 
 {{
-  "file": "파일명",
+  "file": "{file_name}",
   "findings": [
     {{
       "type": "SQL Injection",
@@ -219,23 +244,157 @@ CONFIRMED로 판단하세요.
   ]
 }}
 
-취약점이 없거나
-Rule Scanner가 오탐한 경우에도
-실제 취약점으로 보고하지 마세요.
-
-취약점이 전혀 없다면:
+취약점이 없다면:
 
 {{
-  "file": "파일명",
+  "file": "{file_name}",
   "findings": []
 }}
 
 JSON 이외의 설명이나 Markdown을 추가하지 마세요.
 """
 
+    # ==================================================
+    # 4. Qwen 호출
+    # ==================================================
+
     response = ask_qwen(prompt)
 
-    return parse_qwen_response(response)
+    # ==================================================
+    # 5. Qwen 응답 파싱
+    # ==================================================
+
+    parsed = parse_qwen_response(
+        response
+    )
+
+    # ==================================================
+    # 6. Qwen 결과를 LIST로 변환
+    # ==================================================
+
+    # Qwen 응답이 오류인 경우
+    if not isinstance(parsed, dict):
+
+        print(
+            f"[경고] Qwen 응답 형식 오류: "
+            f"{file_name}"
+        )
+
+        return []
+
+    if "error" in parsed:
+
+        print(
+            f"[경고] Qwen JSON 파싱 실패: "
+            f"{file_name}"
+        )
+
+        return []
+
+    findings = parsed.get(
+        "findings",
+        []
+    )
+
+    if not isinstance(findings, list):
+
+        print(
+            f"[경고] Qwen findings 형식 오류: "
+            f"{file_name}"
+        )
+
+        return []
+
+    # ==================================================
+    # 7. 파일명 / 라인 / 기본값 보완
+    # ==================================================
+
+    normalized_findings = []
+
+    for finding in findings:
+
+        if not isinstance(finding, dict):
+            continue
+
+        finding_type = finding.get(
+            "type"
+        )
+
+        if not finding_type:
+            continue
+
+        # Qwen이 파일명을 빼먹어도
+        # 현재 분석 중인 원본 파일명을 사용
+        finding_file = finding.get(
+            "file"
+        )
+
+        if not finding_file:
+            finding_file = file_name
+
+        # Qwen이 line을 빼먹은 경우
+        # 같은 유형의 Rule Finding에서 보완
+        finding_line = finding.get(
+            "line"
+        )
+
+        if finding_line is None:
+
+            for rule in rule_findings:
+
+                if (
+                    rule.get("type")
+                    == finding_type
+                ):
+                    finding_line = rule.get(
+                        "line"
+                    )
+                    break
+
+        normalized_findings.append({
+            "type": finding_type,
+
+            "severity": finding.get(
+                "severity",
+                "MEDIUM"
+            ),
+
+            "file": finding_file,
+
+            "line": finding_line,
+
+            "evidence": finding.get(
+                "evidence",
+                ""
+            ),
+
+            "description": finding.get(
+                "description",
+                ""
+            ),
+
+            "reason": finding.get(
+                "reason",
+                ""
+            ),
+
+            "recommendation": finding.get(
+                "recommendation",
+                ""
+            ),
+
+            "status": finding.get(
+                "status",
+                "CONFIRMED"
+            ),
+
+            "confidence": finding.get(
+                "confidence",
+                "MEDIUM"
+            )
+        })
+
+    return normalized_findings
 
 
 def parse_qwen_response(response):
@@ -243,31 +402,86 @@ def parse_qwen_response(response):
     Qwen 응답을 JSON으로 변환한다.
     """
 
+    if response is None:
+        return {
+            "error": "Qwen 응답이 없습니다."
+        }
+
     response = response.strip()
 
-    # ```json ... ``` 처리
+    if not response:
+        return {
+            "error": "Qwen 응답이 비어 있습니다."
+        }
+
+    # ==================================================
+    # Markdown code fence 제거
+    # ==================================================
+
     if response.startswith("```"):
 
         lines = response.splitlines()
 
-        if lines[0].startswith("```"):
-            lines = lines[1:]
+        if lines:
 
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
+            first_line = lines[0].strip()
 
-        response = "\n".join(lines).strip()
+            if first_line.startswith("```"):
+                lines = lines[1:]
+
+        if lines:
+
+            last_line = lines[-1].strip()
+
+            if last_line == "```":
+                lines = lines[:-1]
+
+        response = "\n".join(
+            lines
+        ).strip()
+
+    # ==================================================
+    # JSON 직접 파싱
+    # ==================================================
 
     try:
 
-        return json.loads(response)
+        return json.loads(
+            response
+        )
 
     except json.JSONDecodeError:
+        pass
 
-        return {
-            "error": "Qwen 응답을 JSON으로 변환할 수 없습니다.",
-            "raw_response": response
-        }
+    # ==================================================
+    # 응답 안에서 JSON 영역 추출
+    # ==================================================
+
+    start = response.find("{")
+    end = response.rfind("}")
+
+    if start != -1 and end != -1 and end > start:
+
+        json_text = response[
+            start:end + 1
+        ]
+
+        try:
+
+            return json.loads(
+                json_text
+            )
+
+        except json.JSONDecodeError:
+            pass
+
+    return {
+        "error":
+            "Qwen 응답을 JSON으로 변환할 수 없습니다.",
+        "raw_response":
+            response
+    }
+
 
 def validate_rule_finding(source, finding):
     """
@@ -366,25 +580,51 @@ REVIEW
 외부 메서드에서 전달되는 값의 출처를 확인해야 합니다.
 """
 
-    response = ask_qwen(prompt)
+    response = ask_qwen(
+        prompt
+    )
 
     response = response.strip()
 
     upper_response = response.upper()
 
-    if upper_response.startswith("VULNERABLE"):
+    if upper_response.startswith(
+        "VULNERABLE"
+    ):
+
         status = "VULNERABLE"
 
-    elif upper_response.startswith("SAFE"):
+    elif upper_response.startswith(
+        "SAFE"
+    ):
+
         status = "SAFE"
 
-    elif upper_response.startswith("REVIEW"):
+    elif upper_response.startswith(
+        "REVIEW"
+    ):
+
         status = "REVIEW"
 
     else:
+
         status = "REVIEW"
 
     return {
+        "type": finding.get(
+            "type"
+        ),
+
+        "file": finding.get(
+            "file",
+            file_name
+        ),
+
+        "line": finding.get(
+            "line"
+        ),
+
         "status": status,
+
         "reason": response
     }
