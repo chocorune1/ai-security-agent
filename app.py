@@ -48,18 +48,6 @@ if "scan_result" not in st.session_state:
 if "scan_error" not in st.session_state:
     st.session_state.scan_error = None
 
-if "scan_thread" not in st.session_state:
-    st.session_state.scan_thread = None
-
-if "scan_start_time" not in st.session_state:
-    st.session_state.scan_start_time = None
-
-if "scan_progress" not in st.session_state:
-    st.session_state.scan_progress = 0
-
-if "scan_status" not in st.session_state:
-    st.session_state.scan_status = ""
-
 if "scan_state" not in st.session_state:
     st.session_state.scan_state = {
         "progress": 0,
@@ -68,6 +56,9 @@ if "scan_state" not in st.session_state:
         "result": None,
         "error": None
     }
+
+if "scan_start_time" not in st.session_state:
+    st.session_state.scan_start_time = None
 
 
 # ============================================================
@@ -91,22 +82,7 @@ def select_folder():
 
 
 # ============================================================
-# Agent 진행상황 Callback
-# ============================================================
-
-def update_scan_progress(
-    progress,
-    message
-):
-
-    state = st.session_state.scan_state
-
-    state["progress"] = progress
-    state["message"] = message
-
-
-# ============================================================
-# 실제 Agent 실행
+# Agent 실행 Thread
 # ============================================================
 
 def run_security_agent(
@@ -118,16 +94,14 @@ def run_security_agent(
 
         from agent.security_agent import SecurityAgent
 
-        # Agent 생성
         agent = SecurityAgent(
             source_dir=str(source_path)
         )
 
-        # Agent 실행
         result = agent.run(
             progress_callback=(
                 lambda progress, message:
-                update_thread_progress(
+                update_scan_state(
                     scan_state,
                     progress,
                     message
@@ -135,11 +109,14 @@ def run_security_agent(
             )
         )
 
-        scan_state["result"] = result
         scan_state["progress"] = 100
+
         scan_state["message"] = (
             "보안점검이 완료되었습니다."
         )
+
+        scan_state["result"] = result
+
         scan_state["done"] = True
 
     except Exception as e:
@@ -149,10 +126,10 @@ def run_security_agent(
 
 
 # ============================================================
-# Thread용 진행상황 업데이트
+# 진행상황 업데이트
 # ============================================================
 
-def update_thread_progress(
+def update_scan_state(
     scan_state,
     progress,
     message
@@ -169,21 +146,18 @@ def update_thread_progress(
 def start_scan():
 
     st.session_state.scanning = True
+
     st.session_state.scan_result = None
+
     st.session_state.scan_error = None
-
-    st.session_state.scan_progress = 5
-
-    st.session_state.scan_status = (
-        "보안점검을 준비하고 있습니다..."
-    )
 
     st.session_state.scan_start_time = time.time()
 
-    # Thread와 공유할 상태
     scan_state = {
         "progress": 5,
-        "message": "보안점검을 준비하고 있습니다...",
+        "message": (
+            "보안점검을 준비하고 있습니다..."
+        ),
         "done": False,
         "result": None,
         "error": None
@@ -195,7 +169,6 @@ def start_scan():
         st.session_state.source_dir
     )
 
-    # Agent 실행 Thread
     scan_thread = threading.Thread(
         target=run_security_agent,
         args=(
@@ -205,8 +178,6 @@ def start_scan():
         daemon=True
     )
 
-    st.session_state.scan_thread = scan_thread
-
     scan_thread.start()
 
 
@@ -214,7 +185,9 @@ def start_scan():
 # 화면
 # ============================================================
 
-st.title("🔐 AI Source Security Analyzer")
+st.title(
+    "🔐 AI Source Security Analyzer"
+)
 
 st.write(
     "Java / JavaScript / JSP 소스코드를 "
@@ -228,9 +201,13 @@ st.divider()
 # 소스 코드 경로
 # ============================================================
 
-st.subheader("소스 코드")
+st.subheader(
+    "소스 코드"
+)
 
-col1, col2 = st.columns([5, 1])
+col1, col2 = st.columns(
+    [5, 1]
+)
 
 with col1:
 
@@ -273,7 +250,7 @@ st.button(
 
 
 # ============================================================
-# 보안점검 진행 화면
+# 보안점검 진행
 # ============================================================
 
 if st.session_state.scanning:
@@ -330,152 +307,168 @@ if st.session_state.scanning:
 
     status_placeholder = st.empty()
 
-    detail_placeholder = st.empty()
+    stage_placeholder = st.empty()
+
+    elapsed_placeholder = st.empty()
 
 
-    # --------------------------------------------------------
-    # Thread 상태 가져오기
-    # --------------------------------------------------------
-
-    scan_state = st.session_state.scan_state
-
-    current_progress = scan_state.get(
-        "progress",
-        0
+    scan_state = (
+        st.session_state.scan_state
     )
 
-    current_message = scan_state.get(
-        "message",
-        "보안점검을 준비하고 있습니다..."
-    )
 
     # --------------------------------------------------------
-    # 진행률
+    # Agent 실행 완료까지 화면 갱신
     # --------------------------------------------------------
 
-    progress_placeholder.progress(
-        current_progress
-    )
+    while not scan_state["done"]:
 
-    # --------------------------------------------------------
-    # 현재 작업
-    # --------------------------------------------------------
-
-    if scan_state.get("done"):
-
-        status_placeholder.success(
-            "✅ "
-            + current_message
+        current_progress = scan_state.get(
+            "progress",
+            0
         )
 
-    else:
+        current_message = scan_state.get(
+            "message",
+            "보안점검을 준비하고 있습니다..."
+        )
 
+
+        # 진행률
+        progress_placeholder.progress(
+            current_progress
+        )
+
+
+        # 현재 작업
         status_placeholder.info(
             "🔄 "
             + current_message
         )
 
 
+        # 현재 단계
+        if current_progress < 20:
+
+            current_stage = (
+                "① 소스코드 수집"
+            )
+
+        elif current_progress < 40:
+
+            current_stage = (
+                "② Rule 기반 보안점검"
+            )
+
+        elif current_progress < 65:
+
+            current_stage = (
+                "③ Qwen AI 보안 분석"
+            )
+
+        elif current_progress < 80:
+
+            current_stage = (
+                "④ Rule 탐지 결과 AI 검증"
+            )
+
+        elif current_progress < 90:
+
+            current_stage = (
+                "⑤ 보안점검 결과 통합"
+            )
+
+        elif current_progress < 100:
+
+            current_stage = (
+                "⑥ HTML 리포트 생성"
+            )
+
+        else:
+
+            current_stage = (
+                "✓ 보안점검 완료"
+            )
+
+
+        stage_placeholder.write(
+            f"**현재 단계:** {current_stage}"
+        )
+
+
+        # 경과 시간
+        if st.session_state.scan_start_time:
+
+            elapsed_seconds = int(
+                time.time()
+                - st.session_state.scan_start_time
+            )
+
+            elapsed_placeholder.caption(
+                f"⏱ 경과 시간: "
+                f"{elapsed_seconds}초"
+            )
+
+
+        # 오류
+        if scan_state.get("error"):
+
+            st.error(
+                "보안점검 중 오류가 발생했습니다."
+            )
+
+            st.exception(
+                scan_state["error"]
+            )
+
+            st.session_state.scan_error = (
+                scan_state["error"]
+            )
+
+            st.session_state.scanning = False
+
+            st.stop()
+
+
+        # 0.3초마다 진행상태 확인
+        time.sleep(0.3)
+
+
     # --------------------------------------------------------
-    # 단계 표시
+    # 완료
     # --------------------------------------------------------
 
-    if current_progress < 20:
+    progress_placeholder.progress(
+        100
+    )
 
-        current_stage = "① 소스코드 수집"
+    status_placeholder.success(
+        "✅ 보안점검이 완료되었습니다."
+    )
 
-    elif current_progress < 40:
-
-        current_stage = "② Rule 기반 보안점검"
-
-    elif current_progress < 65:
-
-        current_stage = "③ Qwen AI 보안 분석"
-
-    elif current_progress < 80:
-
-        current_stage = "④ AI 검증"
-
-    elif current_progress < 90:
-
-        current_stage = "⑤ 결과 통합"
-
-    elif current_progress < 100:
-
-        current_stage = "⑥ HTML 리포트 생성"
-
-    else:
-
-        current_stage = "✓ 보안점검 완료"
-
-
-    detail_placeholder.write(
-        f"**현재 단계:** {current_stage}"
+    stage_placeholder.write(
+        "**현재 단계:** ✓ 보안점검 완료"
     )
 
 
-    # --------------------------------------------------------
-    # 경과 시간
-    # --------------------------------------------------------
-
-    if st.session_state.scan_start_time is not None:
+    if st.session_state.scan_start_time:
 
         elapsed_seconds = int(
             time.time()
             - st.session_state.scan_start_time
         )
 
-        st.caption(
-            f"⏱ 경과 시간: "
+        elapsed_placeholder.caption(
+            f"⏱ 총 소요 시간: "
             f"{elapsed_seconds}초"
         )
 
 
-    # --------------------------------------------------------
-    # 오류 확인
-    # --------------------------------------------------------
+    st.session_state.scan_result = (
+        scan_state.get("result")
+    )
 
-    if scan_state.get("error") is not None:
-
-        st.error(
-            "보안점검 중 오류가 발생했습니다."
-        )
-
-        st.exception(
-            scan_state["error"]
-        )
-
-        st.session_state.scan_error = (
-            scan_state["error"]
-        )
-
-        st.session_state.scanning = False
-
-        st.stop()
-
-
-    # --------------------------------------------------------
-    # 완료 확인
-    # --------------------------------------------------------
-
-    if scan_state.get("done"):
-
-        st.session_state.scan_result = (
-            scan_state.get("result")
-        )
-
-        st.session_state.scanning = False
-
-        st.rerun()
-
-
-    # --------------------------------------------------------
-    # Agent 실행 중
-    # --------------------------------------------------------
-
-    time.sleep(0.5)
-
-    st.rerun()
+    st.session_state.scanning = False
 
 
 # ============================================================
@@ -516,32 +509,38 @@ if result is not None:
     critical_count = sum(
         1
         for finding in findings
-        if finding.get("severity") == "CRITICAL"
+        if finding.get("severity")
+        == "CRITICAL"
     )
 
 
     high_count = sum(
         1
         for finding in findings
-        if finding.get("severity") == "HIGH"
+        if finding.get("severity")
+        == "HIGH"
     )
 
 
     medium_count = sum(
         1
         for finding in findings
-        if finding.get("severity") == "MEDIUM"
+        if finding.get("severity")
+        == "MEDIUM"
     )
 
 
     low_count = sum(
         1
         for finding in findings
-        if finding.get("severity") == "LOW"
+        if finding.get("severity")
+        == "LOW"
     )
 
 
-    col1, col2, col3, col4, col5 = st.columns(5)
+    col1, col2, col3, col4, col5 = (
+        st.columns(5)
+    )
 
 
     col1.metric(
@@ -624,7 +623,9 @@ if result is not None:
                 f"{file_name}:{line}"
             ):
 
-                col1, col2, col3 = st.columns(3)
+                col1, col2, col3 = (
+                    st.columns(3)
+                )
 
 
                 with col1:
@@ -749,11 +750,9 @@ if result is not None:
             "HTML 리포트"
         )
 
-
         st.success(
             "HTML 보안 리포트가 생성되었습니다."
         )
-
 
         st.code(
             str(report_file),
