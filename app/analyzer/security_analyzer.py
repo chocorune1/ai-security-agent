@@ -1,9 +1,9 @@
 import json
 import re
+import time
 
 from llm.qwen_client import ask_qwen
 from rag.knowledge_store import search_knowledge
-
 
 RAG_QUERY_TERMS = {
     "sql injection": ["SQL Injection", "CWE-89", "parameterized query", "PreparedStatement"],
@@ -20,7 +20,6 @@ RAG_QUERY_TERMS = {
     "ssrf": ["SSRF", "CWE-918", "Server-Side Request Forgery", "server-side request"],
     "authorization": ["Missing Authorization", "CWE-862", "access control", "authorization"],
 }
-
 
 def _clean_json_response(text):
     if not text:
@@ -40,6 +39,14 @@ def _clean_json_response(text):
                 pass
     return None
 
+def _find_line_from_rule(finding, source):
+    evidence = str(finding.get("evidence") or "").strip()
+    if not evidence:
+        return None
+    for index, line in enumerate(source.get("content", "").splitlines(), 1):
+        if evidence in line:
+            return index
+    return None
 
 def _normalize_findings(result, source):
     findings = result.get("findings", []) if isinstance(result, dict) else result if isinstance(result, list) else []
@@ -60,28 +67,16 @@ def _normalize_findings(result, source):
         normalized.append(item)
     return normalized
 
-
-def _find_line_from_rule(finding, source):
-    evidence = str(finding.get("evidence") or "").strip()
-    if not evidence:
-        return None
-    for index, line in enumerate(source.get("content", "").splitlines(), 1):
-        if evidence in line:
-            return index
-    return None
-
-
 def _expanded_rag_query(finding, extension):
     finding_type = str(finding.get("type") or "").strip()
-    normalized = finding_type.lower()
     terms = [finding_type]
+    normalized = finding_type.lower()
     for key, extra in RAG_QUERY_TERMS.items():
         if key in normalized:
             terms.extend(extra)
     if extension:
         terms.append(str(extension))
     return " ".join(dict.fromkeys(t for t in terms if t))
-
 
 def _extract_rag_items(result):
     if not isinstance(result, dict):
@@ -103,49 +98,58 @@ def _extract_rag_items(result):
         })
     return items
 
-
 def build_rag_context(source, rule_findings):
-    """Rule 유형별로 RAG를 검색하고 CWE/OWASP 근거를 Qwen 프롬프트에 전달합니다."""
+    start_time = time.perf_counter()
+    file_name = source.get("file_name", "unknown")
     findings = rule_findings or [{"type": "source code security"}]
     collected, seen = [], set()
+    print(f"\n  [RAG] {file_name} 보안 지식 검색 시작")
     for finding in findings:
+        finding_type = str(finding.get("type") or "Unknown")
         query = _expanded_rag_query(finding, source.get("extension"))
+        print(f"  [RAG] 검색 유형: {finding_type}")
+        print(f"  [RAG] 검색어: {query}")
+        query_start = time.perf_counter()
         try:
             result = search_knowledge(query, top_k=3)
         except Exception as e:
-            print(f"  RAG 검색 오류: {e}")
+            print(f"  [RAG] 검색 오류: {e}")
             continue
-        for item in _extract_rag_items(result):
-            if item["source"] in seen:
+        print(f"  [RAG] 검색 완료: {len(_extract_rag_items(result))}개 / {time.perf_counter()-query_start:.2f}초")
+        for rank, item in enumerate(_extract_rag_items(result), 1):
+            source_name = item["source"]
+            distance = item["distance"]
+            similarity = max(0.0, 1.0 - float(distance)) if isinstance(distance, (int, float)) else None
+            similarity_text = f"{similarity:.3f}" if similarity is not None else "N/A"
+            print(f"  [RAG] {rank}위: {source_name} (유사도 {similarity_text})")
+            if source_name in seen:
                 continue
-            seen.add(item["source"])
+            seen.add(source_name)
             collected.append(item)
     if not collected:
+        print("  [RAG] 관련 보안 지식 없음")
+        print(f"  [RAG] 전체 소요시간: {time.perf_counter()-start_time:.2f}초")
         return "관련 보안 지식이 없습니다."
     parts = []
     for i, item in enumerate(collected[:6], 1):
         distance = item["distance"]
-        similarity = f"{max(0.0, 1.0 - float(distance)):.3f}" if isinstance(distance, (int, float)) else "N/A"
-        parts.append(
-            f"[보안 지식 {i}]\n"
-            f"출처: {item['source']}\n"
-            f"분류: {item['category']}\n"
-            f"검색 유사도(참고값): {similarity}\n"
-            f"내용:\n{item['document']}"
-        )
+        similarity = max(0.0, 1.0 - float(distance)) if isinstance(distance, (int, float)) else None
+        similarity_text = f"{similarity:.3f}" if similarity is not None else "N/A"
+        parts.append(f"[보안 지식 {i}]\n출처: {item['source']}\n분류: {item['category']}\n검색 유사도(참고값): {similarity_text}\n내용:\n{item['document']}")
+    print(f"  [RAG] Qwen 전달 문서: {min(len(collected), 6)}개")
+    print(f"  [RAG] 전체 소요시간: {time.perf_counter()-start_time:.2f}초")
     return "\n\n".join(parts)
-
 
 def analyze_with_qwen(source, rule_findings):
     file_name = source.get("file_name", "unknown")
     extension = source.get("extension", "")
     content = source.get("content", "")
+    rag_start = time.perf_counter()
     rag_context = build_rag_context(source, rule_findings)
+    print(f"  [QWEN-분석] {file_name} 분석 요청 시작")
+    print(f"  [QWEN-분석] RAG 준비시간: {time.perf_counter()-rag_start:.2f}초")
     rule_text = json.dumps(rule_findings, ensure_ascii=False, indent=2)
-
-    prompt = f"""
-당신은 Java, JavaScript, JSP 소스코드 보안 취약점 분석 전문가입니다.
-
+    prompt = f'''당신은 Java, JavaScript, JSP 소스코드 보안 취약점 분석 전문가입니다.
 Rule Scanner 결과와 RAG 보안 지식을 참고하되 반드시 실제 소스코드와 데이터 흐름을 확인하십시오.
 RAG 문서가 검색되었다는 이유만으로 취약점이라고 단정하지 마십시오.
 실제 사용자 입력이 위험한 sink에 도달하고 방어조치가 부족한 경우에만 VULNERABLE을 사용하십시오.
@@ -153,7 +157,6 @@ RAG 문서가 검색되었다는 이유만으로 취약점이라고 단정하지
 동일 코드 위치의 중복 finding은 하나로 통합하십시오.
 VULNERABLE에는 실제 취약 코드를 설명하는 evidence와 실제 line을 제공하십시오.
 recommendation은 RAG 문서를 참고하여 이 코드에 적용 가능한 구체적인 개선방법을 작성하십시오.
-
 status는 VULNERABLE, SAFE, REVIEW 중 하나만 사용하십시오.
 confidence는 HIGH, MEDIUM, LOW 중 하나만 사용하십시오.
 severity는 Critical, High, Medium, Low 중 하나만 사용하십시오.
@@ -189,19 +192,21 @@ Rule Scanner 탐지 결과:
     }}
   ]
 }}
-취약점이 없으면 findings를 빈 배열로 반환하십시오.
-"""
+취약점이 없으면 findings를 빈 배열로 반환하십시오.'''
+    qwen_start = time.perf_counter()
     try:
         response = ask_qwen(prompt)
     except Exception as e:
-        print(f"  Qwen 분석 오류: {e}")
+        print(f"  [QWEN-분석] 오류 ({time.perf_counter()-qwen_start:.2f}초): {e}")
         return []
+    print(f"  [QWEN-분석] 응답 완료: {time.perf_counter()-qwen_start:.2f}초")
     result = _clean_json_response(response)
     if result is None:
-        print("  Qwen 응답을 JSON으로 변환하지 못했습니다.")
+        print("  [QWEN-분석] 응답을 JSON으로 변환하지 못했습니다.")
         return []
-    return _normalize_findings(result, source)
-
+    findings = _normalize_findings(result, source)
+    print(f"  [QWEN-분석] 분석 결과: {len(findings)}개")
+    return findings
 
 def validate_rule_finding(source, finding):
     file_name = source.get("file_name", "unknown")
@@ -209,24 +214,18 @@ def validate_rule_finding(source, finding):
     finding_type = finding.get("type", "Unknown")
     line = finding.get("line")
     evidence = finding.get("evidence", "")
-
-    prompt = f"""
-당신은 소스코드 보안 취약점 검증 전문가입니다.
+    prompt = f'''당신은 소스코드 보안 취약점 검증 전문가입니다.
 Rule Scanner가 발견한 finding을 전체 소스코드와 대조하여 검증하십시오.
-실제 공격 가능한 데이터 흐름이 명확한 경우에만 VULNERABLE,
-보호조치가 확인되면 SAFE, 판단에 필요한 정보가 부족하면 REVIEW입니다.
+실제 공격 가능한 데이터 흐름이 명확한 경우에만 VULNERABLE, 보호조치가 확인되면 SAFE, 판단에 필요한 정보가 부족하면 REVIEW입니다.
 단순히 위험 API가 존재한다는 이유로 VULNERABLE로 판단하지 마십시오.
-
 파일: {file_name}
 취약점 유형: {finding_type}
 탐지 라인: {line}
 탐지 근거: {evidence}
-
 전체 소스코드:
 --------------------
 {content}
 --------------------
-
 JSON만 출력하십시오.
 {{
   "type": "{finding_type}",
@@ -237,15 +236,18 @@ JSON만 출력하십시오.
   "confidence": "HIGH"
 }}
 status: VULNERABLE / SAFE / REVIEW
-confidence: HIGH / MEDIUM / LOW
-"""
+confidence: HIGH / MEDIUM / LOW'''
+    print(f"\n  [QWEN-검증] {finding_type} / {file_name}:{line} 검증 시작")
+    qwen_start = time.perf_counter()
     try:
         response = ask_qwen(prompt)
     except Exception as e:
-        print(f"  Qwen 검증 오류: {e}")
+        print(f"  [QWEN-검증] 오류 ({time.perf_counter()-qwen_start:.2f}초): {e}")
         return {"type": finding_type, "file": file_name, "line": line, "status": "REVIEW", "reason": "AI 검증 실패", "confidence": "LOW"}
+    print(f"  [QWEN-검증] 응답 완료: {time.perf_counter()-qwen_start:.2f}초")
     result = _clean_json_response(response)
     if not isinstance(result, dict):
+        print("  [QWEN-검증] 응답 형식 오류 → REVIEW")
         return {"type": finding_type, "file": file_name, "line": line, "status": "REVIEW", "reason": "AI 응답 형식 오류", "confidence": "LOW"}
     status = (result.get("status") or "REVIEW").upper()
     if status not in {"VULNERABLE", "SAFE", "REVIEW"}:
@@ -253,11 +255,5 @@ confidence: HIGH / MEDIUM / LOW
     confidence = (result.get("confidence") or "MEDIUM").upper()
     if confidence not in {"HIGH", "MEDIUM", "LOW"}:
         confidence = "MEDIUM"
-    return {
-        "type": result.get("type") or finding_type,
-        "file": result.get("file") or file_name,
-        "line": result.get("line") if result.get("line") is not None else line,
-        "status": status,
-        "reason": result.get("reason") or "AI 검증 결과",
-        "confidence": confidence,
-    }
+    print(f"  [QWEN-검증] 판정: {status} / 신뢰도 {confidence}")
+    return {"type": result.get("type") or finding_type, "file": result.get("file") or file_name, "line": result.get("line") if result.get("line") is not None else line, "status": status, "reason": result.get("reason") or "AI 검증 결과", "confidence": confidence}
