@@ -57,13 +57,11 @@ def generate_html_report(findings):
                 <p class="code-note">※ 수정 후 코드는 AI가 해당 취약점에 대해 제안한 예시이며, 실제 적용 전 개발 환경에서 검토 및 테스트가 필요합니다.</p>
             </div>
             """
-        else:
-            fix_section = """
-            <div class="code-fix unavailable">
-                <h3>🔧 수정 전 / 수정 후 코드</h3>
-                <p>최종 취약점으로 확정되지 않아 수정 코드 예시를 생성하지 않았습니다.</p>
-            </div>
-            """
+
+        ai_reason = (
+            str(f.get("reason") or "").strip()
+            or str(f.get("validation_reason") or "").strip()
+        )
 
         rows.append(f"""
         <article class="finding">
@@ -83,7 +81,7 @@ def generate_html_report(findings):
                 <h3>🔎 취약 코드 / 증거</h3>
                 <pre>{_safe_text(f.get('evidence'))}</pre>
                 <h3>설명</h3><p>{_safe_text(f.get('description'))}</p>
-                <h3>AI 판단 근거</h3><p>{_safe_text(f.get('reason'))}</p>
+                <h3>AI 판단 근거</h3><p>{_safe_text(ai_reason)}</p>
                 <h3>Validation 판단</h3><p>{_safe_text(f.get('validation_reason'))}</p>
                 <h3>🛠 개선 방법</h3><p>{_safe_text(f.get('recommendation'))}</p>
                 {fix_section}
@@ -104,7 +102,7 @@ def generate_html_report(findings):
 .summary{{display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-bottom:26px}} .card{{background:#fff;border-radius:12px;padding:20px;box-shadow:0 2px 8px rgba(0,0,0,.06)}} .number{{font-size:30px;font-weight:700}} .label{{color:#666;font-size:13px;margin-top:6px}}
 .finding{{background:#fff;border:1px solid #e2e5e8;border-radius:12px;margin-bottom:22px;overflow:hidden}} .finding-header{{display:flex;align-items:center;gap:14px;padding:18px 22px;background:#fafafa;border-bottom:1px solid #e5e7eb}} .finding-header .number{{font-size:14px;color:#666}} .title{{flex:1;font-size:19px;font-weight:700}} .severity{{padding:6px 13px;border-radius:20px;font-size:12px;font-weight:700}} .critical{{background:#fee2e2;color:#991b1b}} .high{{background:#ffedd5;color:#c2410c}} .medium{{background:#fef3c7;color:#92400e}} .low{{background:#dcfce7;color:#166534}}
 .meta{{display:grid;grid-template-columns:repeat(5,1fr);gap:15px;padding:18px 22px}} .meta div{{display:flex;flex-direction:column;gap:5px}} .meta b{{font-size:12px;color:#777}} .meta span{{font-size:14px;word-break:break-all}} .detail{{padding:22px;border-top:1px solid #eee}} .detail h3{{margin:22px 0 9px}} .detail h3:first-child{{margin-top:0}} .detail p{{line-height:1.7}}
-pre{{background:#1f2937;color:#f3f4f6;padding:16px;border-radius:8px;overflow:auto;white-space:pre-wrap;word-break:break-word}} .code-fix{{margin-top:28px;padding:20px;border:1px solid #dfe3e8;border-radius:10px;background:#fafbfc}} .code-grid{{display:grid;grid-template-columns:1fr 1fr;gap:18px}} .code-grid h4{{margin:8px 0}} .code-grid pre{{min-height:130px}} .before{{border-left:5px solid #dc2626}} .after{{border-left:5px solid #16a34a}} .code-note{{font-size:12px;color:#777;margin-bottom:0}} .unavailable{{color:#777}} .empty{{padding:60px;text-align:center;background:#fff;border-radius:12px}} .footer{{text-align:center;color:#888;font-size:12px;margin-top:25px}}
+pre{{background:#1f2937;color:#f3f4f6;padding:16px;border-radius:8px;overflow:auto;white-space:pre-wrap;word-break:break-word}} .code-fix{{margin-top:28px;padding:20px;border:1px solid #dfe3e8;border-radius:10px;background:#fafbfc}} .code-grid{{display:grid;grid-template-columns:1fr 1fr;gap:18px}} .code-grid h4{{margin:8px 0}} .code-grid pre{{min-height:130px}} .before{{border-left:5px solid #dc2626}} .after{{border-left:5px solid #16a34a}} .code-note{{font-size:12px;color:#777;margin-bottom:0}} .unavailable{{color:#777}} .fix-footer-note{{margin:24px 0;padding:14px 18px;text-align:center;color:#666;background:#f8f8f8;border:1px solid #e5e7eb;border-radius:8px;font-size:13px}} .empty{{padding:60px;text-align:center;background:#fff;border-radius:12px}} .footer{{text-align:center;color:#888;font-size:12px;margin-top:25px}}
 @media(max-width:1000px){{body{{padding:15px}}.summary{{grid-template-columns:repeat(2,1fr)}}.meta{{grid-template-columns:repeat(2,1fr)}}.code-grid{{grid-template-columns:1fr}}}}
 </style></head><body><div class="container">
 <div class="header"><h1>AI Source Code Security Report</h1><p>AI 기반 소스코드 보안점검 결과</p><p>생성일시: {_safe_text(generated_at)}</p></div>
@@ -117,6 +115,7 @@ pre{{background:#1f2937;color:#f3f4f6;padding:16px;border-radius:8px;overflow:au
 <div class="card"><div class="number">{confirmed}</div><div class="label">Confirmed</div></div>
 </div>
 <section><h2>취약점 목록</h2>{findings_html}</section>
+{('<div class="fix-footer-note">최종 취약점으로 확정되지 않아 수정 코드 예시를 생성하지 않았습니다.</div>' if any(_status(f.get("status")) not in {"CONFIRMED", "AI_CONFIRMED"} for f in findings) else '')}
 <div class="footer">AI Source Code Security Analyzer · Rule Scanner + Local Qwen + RAG + Validation</div>
 </div></body></html>"""
 
