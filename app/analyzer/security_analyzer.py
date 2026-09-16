@@ -68,6 +68,8 @@ def _normalize_findings(result, source):
         item["severity"] = item.get("severity") or "Medium"
         item["status"] = (item.get("status") or "REVIEW").upper()
         item["confidence"] = (item.get("confidence") or "MEDIUM").upper()
+        item["vulnerable_code"] = item.get("vulnerable_code") or ""
+        item["fixed_code"] = item.get("fixed_code") or ""
         if item.get("line") is None:
             item["line"] = _find_line_from_rule(item, source)
         normalized.append(item)
@@ -163,6 +165,9 @@ RAG 문서가 검색되었다는 이유만으로 취약점이라고 단정하지
 동일 코드 위치의 중복 finding은 하나로 통합하십시오.
 VULNERABLE에는 실제 취약 코드를 설명하는 evidence와 실제 line을 제공하십시오.
 recommendation은 RAG 문서를 참고하여 이 코드에 적용 가능한 구체적인 개선방법을 작성하십시오.
+VULNERABLE인 경우 vulnerable_code에는 실제 취약 코드의 핵심 부분을 원문 그대로 넣고, fixed_code에는 해당 부분을 안전하게 수정한 구체적인 코드 예시를 넣으십시오.
+vulnerable_code와 fixed_code는 설명문 없이 코드만 출력하십시오. 수정 예시는 전체 파일이 아니라 취약점 수정에 필요한 최소한의 코드 블록으로 작성하십시오.
+SAFE 또는 REVIEW인 경우 vulnerable_code와 fixed_code는 빈 문자열로 반환하십시오.
 status는 VULNERABLE, SAFE, REVIEW 중 하나만 사용하십시오.
 confidence는 HIGH, MEDIUM, LOW 중 하나만 사용하십시오.
 severity는 Critical, High, Medium, Low 중 하나만 사용하십시오.
@@ -193,6 +198,8 @@ Rule Scanner 탐지 결과:
       "description": "취약점 설명",
       "reason": "취약한 데이터 흐름과 판단 근거",
       "recommendation": "구체적인 개선 방법",
+      "vulnerable_code": "취약한 실제 코드",
+      "fixed_code": "안전하게 수정한 코드 예시",
       "status": "VULNERABLE",
       "confidence": "HIGH"
     }}
