@@ -5,49 +5,121 @@ def _normalize(value):
     return str(value).strip().lower()
 
 
-def _same_file(finding1, finding2):
+def _canonical_type(value):
+    """
+    취약점 명칭이 조금 다르더라도
+    실제 동일한 취약점이면 같은 유형으로 취급합니다.
+    """
+
+    value = _normalize(value)
+
+    if not value:
+        return ""
+
+    # XSS
+    if (
+        "cross-site scripting" in value
+        or value == "xss"
+        or "dom xss" in value
+    ):
+        return "xss"
+
+    # eval
+    if (
+        "dangerous eval" in value
+        or "code injection" in value
+        and "eval" in value
+        or value == "eval"
+        or "javascript eval" in value
+    ):
+        return "eval"
+
+    # SQL Injection
+    if "sql injection" in value:
+        return "sql injection"
+
+    # Command Injection
+    if "command injection" in value:
+        return "command injection"
+
+    # Hard-coded Credential
+    if (
+        "hard-coded credential" in value
+        or "hardcoded credential" in value
+        or "hard coded credential" in value
+    ):
+        return "hard-coded credential"
+
+    # Path Traversal
+    if "path traversal" in value:
+        return "path traversal"
+
+    return value
+
+
+def _same_file(
+    finding1,
+    finding2
+):
     return (
         _normalize(
             finding1.get("file")
         )
-        == _normalize(
+        ==
+        _normalize(
             finding2.get("file")
         )
     )
 
 
-def _same_type(finding1, finding2):
+def _same_type(
+    finding1,
+    finding2
+):
     return (
-        _normalize(
+        _canonical_type(
             finding1.get("type")
         )
-        == _normalize(
+        ==
+        _canonical_type(
             finding2.get("type")
         )
     )
 
 
-def _line_close(finding1, finding2):
+def _line_close(
+    finding1,
+    finding2
+):
     line1 = finding1.get("line")
     line2 = finding2.get("line")
 
-    if line1 is None or line2 is None:
+    if (
+        line1 is None
+        or line2 is None
+    ):
         return True
 
     try:
-        return abs(
-            int(line1) - int(line2)
-        ) <= 2
-    except (ValueError, TypeError):
+        return (
+            abs(
+                int(line1)
+                - int(line2)
+            )
+            <= 2
+        )
+
+    except (
+        ValueError,
+        TypeError
+    ):
         return True
 
 
-def _is_same_finding(finding1, finding2):
-    """
-    같은 파일 + 같은 취약점 유형 + 가까운 라인이면
-    동일 취약점으로 판단합니다.
-    """
-
+def _is_same_finding(
+    finding1,
+    finding2
+):
     return (
         _same_file(
             finding1,
@@ -66,7 +138,9 @@ def _is_same_finding(finding1, finding2):
     )
 
 
-def _severity_rank(severity):
+def _severity_rank(
+    severity
+):
     ranks = {
         "CRITICAL": 4,
         "HIGH": 3,
@@ -75,12 +149,16 @@ def _severity_rank(severity):
     }
 
     return ranks.get(
-        _normalize(severity).upper(),
+        _normalize(
+            severity
+        ).upper(),
         0
     )
 
 
-def _confidence_rank(confidence):
+def _confidence_rank(
+    confidence
+):
     ranks = {
         "HIGH": 3,
         "MEDIUM": 2,
@@ -88,7 +166,9 @@ def _confidence_rank(confidence):
     }
 
     return ranks.get(
-        _normalize(confidence).upper(),
+        _normalize(
+            confidence
+        ).upper(),
         0
     )
 
@@ -97,10 +177,14 @@ def _select_higher_severity(
     first,
     second
 ):
-    if _severity_rank(
-        second.get("severity")
-    ) > _severity_rank(
-        first.get("severity")
+    if (
+        _severity_rank(
+            second.get("severity")
+        )
+        >
+        _severity_rank(
+            first.get("severity")
+        )
     ):
         first["severity"] = (
             second.get("severity")
@@ -113,10 +197,14 @@ def _select_higher_confidence(
     first,
     second
 ):
-    if _confidence_rank(
-        second.get("confidence")
-    ) > _confidence_rank(
-        first.get("confidence")
+    if (
+        _confidence_rank(
+            second.get("confidence")
+        )
+        >
+        _confidence_rank(
+            first.get("confidence")
+        )
     ):
         first["confidence"] = (
             second.get("confidence")
@@ -125,30 +213,64 @@ def _select_higher_confidence(
     return first
 
 
+def _find_matching(
+    findings,
+    target
+):
+    for finding in findings:
+
+        if _is_same_finding(
+            finding,
+            target
+        ):
+            return finding
+
+    return None
+
+
 def merge_findings(
     rule_findings,
     ai_results,
     validation_results
 ):
     """
-    Rule / AI / Validation 결과를 통합합니다.
+    Rule / AI / Validation 결과를 최종 통합합니다.
 
-    핵심 원칙:
+    처리 원칙:
 
-    1. Validation SAFE → 제외
-    2. Validation VULNERABLE + Rule → CONFIRMED
-    3. AI VULNERABLE + Rule → CONFIRMED
-    4. AI REVIEW → REVIEW_REQUIRED
-    5. 중복 결과 제거
+    1. Validation SAFE
+       → 최종 결과에서 완전히 제외
+
+    2. Validation VULNERABLE + Rule
+       → CONFIRMED
+
+    3. Validation REVIEW + Rule
+       → REVIEW_REQUIRED
+
+    4. AI VULNERABLE + Rule
+       → CONFIRMED
+
+    5. AI REVIEW + Rule
+       → 기존 상태 유지 또는 REVIEW_REQUIRED
+
+    6. Rule과 AI가 같은 취약점을 발견하면
+       하나의 Finding으로 통합
+
+    7. 이미 SAFE로 판정된 동일 취약점은
+       AI 결과에서 다시 추가하지 않음
+
+    8. 동일 취약점 중복 제거
     """
 
     final_findings = []
 
-    # --------------------------------------------------
-    # 1. Validation 결과를 먼저 확인
-    # --------------------------------------------------
+    # ============================================================
+    # 1. Validation 결과 정리
+    # ============================================================
 
-    validation_map = []
+    safe_validations = []
+    vulnerable_validations = []
+    review_validations = []
 
     for validation in validation_results:
 
@@ -163,13 +285,27 @@ def merge_findings(
             or "REVIEW"
         ).upper()
 
-        validation_map.append(
-            validation
-        )
+        if status == "SAFE":
 
-    # --------------------------------------------------
+            safe_validations.append(
+                validation
+            )
+
+        elif status == "VULNERABLE":
+
+            vulnerable_validations.append(
+                validation
+            )
+
+        else:
+
+            review_validations.append(
+                validation
+            )
+
+    # ============================================================
     # 2. Rule 결과 처리
-    # --------------------------------------------------
+    # ============================================================
 
     for rule in rule_findings:
 
@@ -179,97 +315,87 @@ def merge_findings(
         ):
             continue
 
-        matched_validation = None
+        # --------------------------------------------------------
+        # SAFE 검증 확인
+        # --------------------------------------------------------
 
-        for validation in validation_map:
+        safe_validation = _find_matching(
+            safe_validations,
+            rule
+        )
 
-            if _is_same_finding(
-                rule,
-                validation
-            ):
-                matched_validation = validation
-                break
+        if safe_validation:
 
-        # --------------------------------------------------
-        # SAFE → False Positive 제거
-        # --------------------------------------------------
+            print(
+                f"  [제외] "
+                f"{rule.get('type')} / "
+                f"{rule.get('file')}:"
+                f"{rule.get('line')} "
+                f"→ AI 검증 SAFE"
+            )
 
-        if matched_validation:
+            continue
 
-            validation_status = (
-                matched_validation.get(
-                    "status"
-                )
-                or "REVIEW"
-            ).upper()
-
-            if validation_status == "SAFE":
-
-                print(
-                    f"  [제외] "
-                    f"{rule.get('type')} / "
-                    f"{rule.get('file')}:"
-                    f"{rule.get('line')} "
-                    f"→ AI 검증 SAFE"
-                )
-
-                continue
-
-        # --------------------------------------------------
-        # Rule 기본 결과 생성
-        # --------------------------------------------------
+        # --------------------------------------------------------
+        # 기본 Rule Finding
+        # --------------------------------------------------------
 
         merged = dict(rule)
 
         merged["detection"] = "RULE"
-
         merged["status"] = (
             "REVIEW_REQUIRED"
         )
-
         merged["confidence"] = "LOW"
 
-        # --------------------------------------------------
-        # Validation 결과 반영
-        # --------------------------------------------------
+        # --------------------------------------------------------
+        # VULNERABLE 검증
+        # --------------------------------------------------------
 
-        if matched_validation:
+        vulnerable_validation = (
+            _find_matching(
+                vulnerable_validations,
+                rule
+            )
+        )
 
-            validation_status = (
-                matched_validation.get(
-                    "status"
-                )
-                or "REVIEW"
-            ).upper()
+        if vulnerable_validation:
 
-            validation_confidence = (
-                matched_validation.get(
+            merged["status"] = (
+                "CONFIRMED"
+            )
+
+            merged["detection"] = (
+                "RULE + AI"
+            )
+
+            merged["confidence"] = (
+                vulnerable_validation.get(
                     "confidence"
                 )
-                or "MEDIUM"
-            ).upper()
+                or "HIGH"
+            )
 
-            if validation_status == "VULNERABLE":
-
-                merged["status"] = (
-                    "CONFIRMED"
+            merged["validation_reason"] = (
+                vulnerable_validation.get(
+                    "reason"
                 )
+            )
 
-                merged["detection"] = (
-                    "RULE + AI"
+        else:
+
+            # ----------------------------------------------------
+            # REVIEW 검증
+            # ----------------------------------------------------
+
+            review_validation = (
+                _find_matching(
+                    review_validations,
+                    rule
                 )
+            )
 
-                merged["confidence"] = (
-                    validation_confidence
-                )
-
-                merged["validation_reason"] = (
-                    matched_validation.get(
-                        "reason"
-                    )
-                )
-
-            elif validation_status == "REVIEW":
+            if review_validation:
 
                 merged["status"] = (
                     "REVIEW_REQUIRED"
@@ -280,11 +406,14 @@ def merge_findings(
                 )
 
                 merged["confidence"] = (
-                    validation_confidence
+                    review_validation.get(
+                        "confidence"
+                    )
+                    or "MEDIUM"
                 )
 
                 merged["validation_reason"] = (
-                    matched_validation.get(
+                    review_validation.get(
                         "reason"
                     )
                 )
@@ -293,9 +422,9 @@ def merge_findings(
             merged
         )
 
-    # --------------------------------------------------
-    # 3. Qwen AI 결과 추가
-    # --------------------------------------------------
+    # ============================================================
+    # 3. AI 결과 처리
+    # ============================================================
 
     for ai in ai_results:
 
@@ -310,24 +439,44 @@ def merge_findings(
             or "REVIEW"
         ).upper()
 
-        # SAFE는 최종 결과에 추가하지 않음
+        # --------------------------------------------------------
+        # SAFE AI 결과는 제외
+        # --------------------------------------------------------
+
         if ai_status == "SAFE":
             continue
 
-        matched = None
+        # --------------------------------------------------------
+        # 중요:
+        # Validation에서 SAFE였던 결과는
+        # AI가 REVIEW/VULNERABLE로 다시 발견해도 제외
+        # --------------------------------------------------------
 
-        for final in final_findings:
+        safe_validation = _find_matching(
+            safe_validations,
+            ai
+        )
 
-            if _is_same_finding(
-                final,
-                ai
-            ):
-                matched = final
-                break
+        if safe_validation:
 
-        # --------------------------------------------------
-        # 이미 Rule 결과가 존재
-        # --------------------------------------------------
+            print(
+                f"  [제외] "
+                f"{ai.get('type')} / "
+                f"{ai.get('file')}:"
+                f"{ai.get('line')} "
+                f"→ 기존 AI 검증 SAFE"
+            )
+
+            continue
+
+        # --------------------------------------------------------
+        # 기존 Finding과 매칭
+        # --------------------------------------------------------
+
+        matched = _find_matching(
+            final_findings,
+            ai
+        )
 
         if matched:
 
@@ -345,7 +494,10 @@ def merge_findings(
 
                 if matched.get(
                     "status"
-                ) != "CONFIRMED":
+                ) not in {
+                    "CONFIRMED",
+                    "AI_CONFIRMED"
+                }:
 
                     matched["status"] = (
                         "REVIEW_REQUIRED"
@@ -361,13 +513,15 @@ def merge_findings(
                 ai
             )
 
-            # AI가 제공한 설명이 더 풍부하면 반영
+            # ----------------------------------------------------
+            # AI가 제공한 상세 정보 반영
+            # ----------------------------------------------------
+
             for field in [
                 "evidence",
                 "description",
                 "reason",
-                "recommendation",
-                "severity"
+                "recommendation"
             ]:
 
                 value = ai.get(field)
@@ -375,16 +529,24 @@ def merge_findings(
                 if value:
                     matched[field] = value
 
+            if ai.get(
+                "severity"
+            ):
+                matched["severity"] = (
+                    ai.get("severity")
+                )
+
             if ai.get("line") is not None:
-                matched["line"] = ai.get(
-                    "line"
+
+                matched["line"] = (
+                    ai.get("line")
                 )
 
             continue
 
-        # --------------------------------------------------
-        # Rule에서 발견하지 못한 AI 결과
-        # --------------------------------------------------
+        # --------------------------------------------------------
+        # Rule에서 발견하지 못한 AI Finding
+        # --------------------------------------------------------
 
         new_finding = dict(ai)
 
@@ -406,26 +568,20 @@ def merge_findings(
             new_finding
         )
 
-    # --------------------------------------------------
+    # ============================================================
     # 4. 최종 중복 제거
-    # --------------------------------------------------
+    # ============================================================
 
     deduplicated = []
 
     for finding in final_findings:
 
-        duplicate = None
+        matched = _find_matching(
+            deduplicated,
+            finding
+        )
 
-        for existing in deduplicated:
-
-            if _is_same_finding(
-                existing,
-                finding
-            ):
-                duplicate = existing
-                break
-
-        if duplicate is None:
+        if matched is None:
 
             deduplicated.append(
                 finding
@@ -433,21 +589,30 @@ def merge_findings(
 
             continue
 
-        # 더 심각한 severity 유지
+        # --------------------------------------------------------
+        # 더 높은 심각도 유지
+        # --------------------------------------------------------
+
         _select_higher_severity(
-            duplicate,
+            matched,
             finding
         )
 
-        # 더 높은 confidence 유지
+        # --------------------------------------------------------
+        # 더 높은 신뢰도 유지
+        # --------------------------------------------------------
+
         _select_higher_confidence(
-            duplicate,
+            matched,
             finding
         )
 
-        # CONFIRMED 상태 우선
-        existing_status = (
-            duplicate.get("status")
+        # --------------------------------------------------------
+        # CONFIRMED 우선
+        # --------------------------------------------------------
+
+        current_status = (
+            matched.get("status")
             or ""
         )
 
@@ -456,30 +621,53 @@ def merge_findings(
             or ""
         )
 
-        if (
-            new_status in {
-                "CONFIRMED",
-                "AI_CONFIRMED"
-            }
-            and
-            existing_status not in {
-                "CONFIRMED",
-                "AI_CONFIRMED"
-            }
-        ):
-            duplicate["status"] = new_status
+        confirmed_statuses = {
+            "CONFIRMED",
+            "AI_CONFIRMED"
+        }
 
-        # 설명 정보 보강
+        if (
+            new_status
+            in confirmed_statuses
+            and
+            current_status
+            not in confirmed_statuses
+        ):
+
+            matched["status"] = (
+                new_status
+            )
+
+        # --------------------------------------------------------
+        # Rule + AI 우선
+        # --------------------------------------------------------
+
+        if (
+            finding.get("detection")
+            == "RULE + AI"
+        ):
+
+            matched["detection"] = (
+                "RULE + AI"
+            )
+
+        # --------------------------------------------------------
+        # 상세 정보 보완
+        # --------------------------------------------------------
+
         for field in [
             "evidence",
             "description",
             "reason",
-            "recommendation"
+            "recommendation",
+            "validation_reason"
         ]:
 
-            if not duplicate.get(field):
+            if not matched.get(field):
+
                 if finding.get(field):
-                    duplicate[field] = (
+
+                    matched[field] = (
                         finding.get(field)
                     )
 
