@@ -1,6 +1,12 @@
 import json
+import logging
+import os
 import re
 import time
+
+DEBUG = os.getenv("AI_SECURITY_DEBUG", "0") == "1"
+logging.basicConfig(level=logging.DEBUG if DEBUG else logging.WARNING, format="%(message)s")
+logger = logging.getLogger(__name__)
 
 from llm.qwen_client import ask_qwen
 from rag.knowledge_store import search_knowledge
@@ -103,32 +109,32 @@ def build_rag_context(source, rule_findings):
     file_name = source.get("file_name", "unknown")
     findings = rule_findings or [{"type": "source code security"}]
     collected, seen = [], set()
-    print(f"\n  [RAG] {file_name} 보안 지식 검색 시작")
+    logger.debug(f"\n  [RAG] {file_name} 보안 지식 검색 시작")
     for finding in findings:
         finding_type = str(finding.get("type") or "Unknown")
         query = _expanded_rag_query(finding, source.get("extension"))
-        print(f"  [RAG] 검색 유형: {finding_type}")
-        print(f"  [RAG] 검색어: {query}")
+        logger.debug(f"  [RAG] 검색 유형: {finding_type}")
+        logger.debug(f"  [RAG] 검색어: {query}")
         query_start = time.perf_counter()
         try:
             result = search_knowledge(query, top_k=3)
         except Exception as e:
-            print(f"  [RAG] 검색 오류: {e}")
+            logger.debug(f"  [RAG] 검색 오류: {e}")
             continue
-        print(f"  [RAG] 검색 완료: {len(_extract_rag_items(result))}개 / {time.perf_counter()-query_start:.2f}초")
+        logger.debug(f"  [RAG] 검색 완료: {len(_extract_rag_items(result))}개 / {time.perf_counter()-query_start:.2f}초")
         for rank, item in enumerate(_extract_rag_items(result), 1):
             source_name = item["source"]
             distance = item["distance"]
             similarity = max(0.0, 1.0 - float(distance)) if isinstance(distance, (int, float)) else None
             similarity_text = f"{similarity:.3f}" if similarity is not None else "N/A"
-            print(f"  [RAG] {rank}위: {source_name} (유사도 {similarity_text})")
+            logger.debug(f"  [RAG] {rank}위: {source_name} (유사도 {similarity_text})")
             if source_name in seen:
                 continue
             seen.add(source_name)
             collected.append(item)
     if not collected:
-        print("  [RAG] 관련 보안 지식 없음")
-        print(f"  [RAG] 전체 소요시간: {time.perf_counter()-start_time:.2f}초")
+        logger.debug("  [RAG] 관련 보안 지식 없음")
+        logger.debug(f"  [RAG] 전체 소요시간: {time.perf_counter()-start_time:.2f}초")
         return "관련 보안 지식이 없습니다."
     parts = []
     for i, item in enumerate(collected[:6], 1):
@@ -136,8 +142,8 @@ def build_rag_context(source, rule_findings):
         similarity = max(0.0, 1.0 - float(distance)) if isinstance(distance, (int, float)) else None
         similarity_text = f"{similarity:.3f}" if similarity is not None else "N/A"
         parts.append(f"[보안 지식 {i}]\n출처: {item['source']}\n분류: {item['category']}\n검색 유사도(참고값): {similarity_text}\n내용:\n{item['document']}")
-    print(f"  [RAG] Qwen 전달 문서: {min(len(collected), 6)}개")
-    print(f"  [RAG] 전체 소요시간: {time.perf_counter()-start_time:.2f}초")
+    logger.debug(f"  [RAG] Qwen 전달 문서: {min(len(collected), 6)}개")
+    logger.debug(f"  [RAG] 전체 소요시간: {time.perf_counter()-start_time:.2f}초")
     return "\n\n".join(parts)
 
 def analyze_with_qwen(source, rule_findings):
@@ -146,8 +152,8 @@ def analyze_with_qwen(source, rule_findings):
     content = source.get("content", "")
     rag_start = time.perf_counter()
     rag_context = build_rag_context(source, rule_findings)
-    print(f"  [QWEN-분석] {file_name} 분석 요청 시작")
-    print(f"  [QWEN-분석] RAG 준비시간: {time.perf_counter()-rag_start:.2f}초")
+    logger.debug(f"  [QWEN-분석] {file_name} 분석 요청 시작")
+    logger.debug(f"  [QWEN-분석] RAG 준비시간: {time.perf_counter()-rag_start:.2f}초")
     rule_text = json.dumps(rule_findings, ensure_ascii=False, indent=2)
     prompt = f'''당신은 Java, JavaScript, JSP 소스코드 보안 취약점 분석 전문가입니다.
 Rule Scanner 결과와 RAG 보안 지식을 참고하되 반드시 실제 소스코드와 데이터 흐름을 확인하십시오.
@@ -197,15 +203,15 @@ Rule Scanner 탐지 결과:
     try:
         response = ask_qwen(prompt)
     except Exception as e:
-        print(f"  [QWEN-분석] 오류 ({time.perf_counter()-qwen_start:.2f}초): {e}")
+        logger.debug(f"  [QWEN-분석] 오류 ({time.perf_counter()-qwen_start:.2f}초): {e}")
         return []
-    print(f"  [QWEN-분석] 응답 완료: {time.perf_counter()-qwen_start:.2f}초")
+    logger.debug(f"  [QWEN-분석] 응답 완료: {time.perf_counter()-qwen_start:.2f}초")
     result = _clean_json_response(response)
     if result is None:
-        print("  [QWEN-분석] 응답을 JSON으로 변환하지 못했습니다.")
+        logger.debug("  [QWEN-분석] 응답을 JSON으로 변환하지 못했습니다.")
         return []
     findings = _normalize_findings(result, source)
-    print(f"  [QWEN-분석] 분석 결과: {len(findings)}개")
+    logger.debug(f"  [QWEN-분석] 분석 결과: {len(findings)}개")
     return findings
 
 def validate_rule_finding(source, finding):
@@ -237,17 +243,17 @@ JSON만 출력하십시오.
 }}
 status: VULNERABLE / SAFE / REVIEW
 confidence: HIGH / MEDIUM / LOW'''
-    print(f"\n  [QWEN-검증] {finding_type} / {file_name}:{line} 검증 시작")
+    logger.debug(f"\n  [QWEN-검증] {finding_type} / {file_name}:{line} 검증 시작")
     qwen_start = time.perf_counter()
     try:
         response = ask_qwen(prompt)
     except Exception as e:
-        print(f"  [QWEN-검증] 오류 ({time.perf_counter()-qwen_start:.2f}초): {e}")
+        logger.debug(f"  [QWEN-검증] 오류 ({time.perf_counter()-qwen_start:.2f}초): {e}")
         return {"type": finding_type, "file": file_name, "line": line, "status": "REVIEW", "reason": "AI 검증 실패", "confidence": "LOW"}
-    print(f"  [QWEN-검증] 응답 완료: {time.perf_counter()-qwen_start:.2f}초")
+    logger.debug(f"  [QWEN-검증] 응답 완료: {time.perf_counter()-qwen_start:.2f}초")
     result = _clean_json_response(response)
     if not isinstance(result, dict):
-        print("  [QWEN-검증] 응답 형식 오류 → REVIEW")
+        logger.debug("  [QWEN-검증] 응답 형식 오류 → REVIEW")
         return {"type": finding_type, "file": file_name, "line": line, "status": "REVIEW", "reason": "AI 응답 형식 오류", "confidence": "LOW"}
     status = (result.get("status") or "REVIEW").upper()
     if status not in {"VULNERABLE", "SAFE", "REVIEW"}:
@@ -255,5 +261,5 @@ confidence: HIGH / MEDIUM / LOW'''
     confidence = (result.get("confidence") or "MEDIUM").upper()
     if confidence not in {"HIGH", "MEDIUM", "LOW"}:
         confidence = "MEDIUM"
-    print(f"  [QWEN-검증] 판정: {status} / 신뢰도 {confidence}")
+    logger.debug(f"  [QWEN-검증] 판정: {status} / 신뢰도 {confidence}")
     return {"type": result.get("type") or finding_type, "file": result.get("file") or file_name, "line": result.get("line") if result.get("line") is not None else line, "status": status, "reason": result.get("reason") or "AI 검증 결과", "confidence": confidence}
