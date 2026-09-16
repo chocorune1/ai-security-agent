@@ -113,6 +113,8 @@ def merge_findings(rule_findings, ai_results, validation_results):
             merged["detection"] = "RULE + AI"
             merged["confidence"] = validation.get("confidence") or "HIGH"
             merged["validation_reason"] = validation.get("reason")
+            if not merged.get("reason") and validation.get("reason"):
+                merged["reason"] = validation.get("reason")
         else:
             validation = _find_matching(review_validations, rule)
             if validation:
@@ -120,6 +122,8 @@ def merge_findings(rule_findings, ai_results, validation_results):
                 merged["detection"] = "RULE + AI"
                 merged["confidence"] = validation.get("confidence") or "MEDIUM"
                 merged["validation_reason"] = validation.get("reason")
+                if not merged.get("reason") and validation.get("reason"):
+                    merged["reason"] = validation.get("reason")
 
         final_findings.append(merged)
 
