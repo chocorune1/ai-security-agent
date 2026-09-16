@@ -3,301 +3,396 @@ from datetime import datetime
 from html import escape
 
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-REPORT_DIR = BASE_DIR / "reports"
+BASE_DIR = Path(
+    __file__
+).resolve().parents[2]
+
+REPORT_DIR = (
+    BASE_DIR / "reports"
+)
 
 
-def generate_html_report(findings, output_file=None):
+def _normalize_severity(
+    severity
+):
+    if not severity:
+        return "MEDIUM"
+
+    value = str(
+        severity
+    ).strip().upper()
+
+    if value not in {
+        "CRITICAL",
+        "HIGH",
+        "MEDIUM",
+        "LOW"
+    }:
+        return "MEDIUM"
+
+    return value
+
+
+def _normalize_status(
+    status
+):
+    if not status:
+        return "REVIEW_REQUIRED"
+
+    return str(
+        status
+    ).strip().upper()
+
+
+def _severity_class(
+    severity
+):
+    return _normalize_severity(
+        severity
+    ).lower()
+
+
+def _safe_text(value):
+    if value is None:
+        return "-"
+
+    return escape(
+        str(value)
+    )
+
+
+def _count_severity(
+    findings,
+    severity
+):
+    return sum(
+        1
+        for finding in findings
+        if _normalize_severity(
+            finding.get("severity")
+        )
+        == severity
+    )
+
+
+def generate_html_report(
+    findings
+):
+    """
+    최종 Finding 목록을 이용하여
+    HTML 보안점검 리포트를 생성합니다.
+    """
+
+    if findings is None:
+        findings = []
+
+    # ------------------------------------------------------------
+    # 최종 데이터 정리
+    # ------------------------------------------------------------
+
+    normalized_findings = []
+
+    for finding in findings:
+
+        if not isinstance(
+            finding,
+            dict
+        ):
+            continue
+
+        item = dict(
+            finding
+        )
+
+        item["severity"] = (
+            _normalize_severity(
+                item.get("severity")
+            )
+        )
+
+        item["status"] = (
+            _normalize_status(
+                item.get("status")
+            )
+        )
+
+        normalized_findings.append(
+            item
+        )
+
+    findings = normalized_findings
+
+    # ------------------------------------------------------------
+    # 심각도 집계
+    # ------------------------------------------------------------
+
+    critical_count = _count_severity(
+        findings,
+        "CRITICAL"
+    )
+
+    high_count = _count_severity(
+        findings,
+        "HIGH"
+    )
+
+    medium_count = _count_severity(
+        findings,
+        "MEDIUM"
+    )
+
+    low_count = _count_severity(
+        findings,
+        "LOW"
+    )
+
+    total_count = len(
+        findings
+    )
+
+    confirmed_count = sum(
+        1
+        for finding in findings
+        if finding.get("status")
+        in {
+            "CONFIRMED",
+            "AI_CONFIRMED"
+        }
+    )
+
+    # ------------------------------------------------------------
+    # 생성 시간
+    # ------------------------------------------------------------
+
+    generated_at = datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    # ------------------------------------------------------------
+    # 파일명
+    # ------------------------------------------------------------
 
     REPORT_DIR.mkdir(
         parents=True,
         exist_ok=True
     )
 
-    if output_file is None:
-        timestamp = datetime.now().strftime(
+    report_name = (
+        "security_report_"
+        + datetime.now().strftime(
             "%Y%m%d_%H%M%S"
         )
-
-        output_file = (
-            REPORT_DIR
-            / f"security_report_{timestamp}.html"
-        )
-
-    total_count = len(findings)
-
-    critical_count = sum(
-        1
-        for finding in findings
-        if finding.get("severity") == "CRITICAL"
+        + ".html"
     )
 
-    high_count = sum(
-        1
-        for finding in findings
-        if finding.get("severity") == "HIGH"
+    report_path = (
+        REPORT_DIR
+        / report_name
     )
 
-    medium_count = sum(
-        1
-        for finding in findings
-        if finding.get("severity") == "MEDIUM"
-    )
+    # ------------------------------------------------------------
+    # 취약점 목록 HTML
+    # ------------------------------------------------------------
 
-    low_count = sum(
-        1
-        for finding in findings
-        if finding.get("severity") == "LOW"
-    )
-
-    confirmed_count = sum(
-        1
-        for finding in findings
-        if finding.get("status") == "CONFIRMED"
-    )
-
-    review_count = sum(
-        1
-        for finding in findings
-        if finding.get("status") == "REVIEW_REQUIRED"
-    )
-
-    rows = []
+    finding_rows = []
 
     for index, finding in enumerate(
         findings,
         start=1
     ):
 
-        severity = finding.get(
-            "severity",
-            "-"
+        vulnerability_type = (
+            finding.get(
+                "type",
+                "-"
+            )
         )
 
-        if severity == "CRITICAL":
-            severity_class = "critical"
-        elif severity == "HIGH":
-            severity_class = "high"
-        elif severity == "MEDIUM":
-            severity_class = "medium"
-        else:
-            severity_class = "low"
-
-        rows.append(
-            f"""
-            <tr>
-                <td>{index}</td>
-
-                <td>
-                    <strong>
-                        {escape(str(
-                            finding.get(
-                                "type",
-                                "-"
-                            )
-                        ))}
-                    </strong>
-                </td>
-
-                <td>
-                    <span class="severity {severity_class}">
-                        {escape(str(severity))}
-                    </span>
-                </td>
-
-                <td>
-                    {escape(str(
-                        finding.get(
-                            "file",
-                            "-"
-                        )
-                    ))}
-                </td>
-
-                <td>
-                    {escape(str(
-                        finding.get(
-                            "line",
-                            "-"
-                        )
-                    ))}
-                </td>
-
-                <td>
-                    {escape(str(
-                        finding.get(
-                            "detection",
-                            "-"
-                        )
-                    ))}
-                </td>
-
-                <td>
-                    {escape(str(
-                        finding.get(
-                            "status",
-                            "-"
-                        )
-                    ))}
-                </td>
-            </tr>
-            """
+        severity = (
+            _normalize_severity(
+                finding.get(
+                    "severity"
+                )
+            )
         )
 
-    detail_sections = []
+        file_name = (
+            finding.get(
+                "file",
+                "-"
+            )
+        )
 
-    for index, finding in enumerate(
-        findings,
-        start=1
-    ):
+        line = (
+            finding.get(
+                "line",
+                "-"
+            )
+        )
 
-        detail_sections.append(
-            f"""
-            <div class="finding-card">
+        detection = (
+            finding.get(
+                "detection",
+                "-"
+            )
+        )
 
-                <h2>
-                    [{index}]
-                    {escape(str(
-                        finding.get(
-                            "type",
-                            "-"
-                        )
-                    ))}
-                </h2>
+        status = (
+            _normalize_status(
+                finding.get(
+                    "status"
+                )
+            )
+        )
 
-                <div class="detail-grid">
+        confidence = (
+            finding.get(
+                "confidence",
+                "-"
+            )
+        )
 
-                    <div>
-                        <span class="label">
-                            심각도
-                        </span>
-                        <span class="value">
-                            {escape(str(
-                                finding.get(
-                                    "severity",
-                                    "-"
-                                )
-                            ))}
-                        </span>
-                    </div>
+        evidence = (
+            finding.get(
+                "evidence",
+                "-"
+            )
+        )
 
-                    <div>
-                        <span class="label">
-                            상태
-                        </span>
-                        <span class="value">
-                            {escape(str(
-                                finding.get(
-                                    "status",
-                                    "-"
-                                )
-                            ))}
-                        </span>
-                    </div>
+        description = (
+            finding.get(
+                "description",
+                "-"
+            )
+        )
 
-                    <div>
-                        <span class="label">
-                            파일
-                        </span>
-                        <span class="value">
-                            {escape(str(
-                                finding.get(
-                                    "file",
-                                    "-"
-                                )
-                            ))}
-                        </span>
-                    </div>
+        reason = (
+            finding.get(
+                "reason",
+                "-"
+            )
+        )
 
-                    <div>
-                        <span class="label">
-                            라인
-                        </span>
-                        <span class="value">
-                            {escape(str(
-                                finding.get(
-                                    "line",
-                                    "-"
-                                )
-                            ))}
-                        </span>
-                    </div>
+        validation_reason = (
+            finding.get(
+                "validation_reason",
+                "-"
+            )
+        )
 
-                    <div>
-                        <span class="label">
-                            탐지 방법
-                        </span>
-                        <span class="value">
-                            {escape(str(
-                                finding.get(
-                                    "detection",
-                                    "-"
-                                )
-                            ))}
-                        </span>
-                    </div>
+        recommendation = (
+            finding.get(
+                "recommendation",
+                "-"
+            )
+        )
 
-                    <div>
-                        <span class="label">
-                            신뢰도
-                        </span>
-                        <span class="value">
-                            {escape(str(
-                                finding.get(
-                                    "confidence",
-                                    "-"
-                                )
-                            ))}
-                        </span>
-                    </div>
+        row = f"""
+        <div class="finding">
 
+            <div class="finding-header">
+
+                <div class="finding-number">
+                    #{index}
                 </div>
 
-                <h3>탐지 증거</h3>
+                <div class="finding-title">
+                    {_safe_text(vulnerability_type)}
+                </div>
 
-                <pre>{escape(str(
-                    finding.get(
-                        "evidence",
-                        "-"
-                    )
-                ))}</pre>
+                <div class="severity {_severity_class(severity)}">
+                    {_safe_text(severity)}
+                </div>
 
-                <h3>취약점 설명</h3>
+            </div>
+
+            <div class="finding-meta">
+
+                <div>
+                    <strong>파일</strong>
+                    <span>{_safe_text(file_name)}</span>
+                </div>
+
+                <div>
+                    <strong>라인</strong>
+                    <span>{_safe_text(line)}</span>
+                </div>
+
+                <div>
+                    <strong>탐지 방법</strong>
+                    <span>{_safe_text(detection)}</span>
+                </div>
+
+                <div>
+                    <strong>상태</strong>
+                    <span>{_safe_text(status)}</span>
+                </div>
+
+                <div>
+                    <strong>신뢰도</strong>
+                    <span>{_safe_text(confidence)}</span>
+                </div>
+
+            </div>
+
+            <div class="detail">
+
+                <h3>🔎 취약 코드 / 증거</h3>
+
+                <pre>{_safe_text(evidence)}</pre>
+
+                <h3>설명</h3>
 
                 <p>
-                    {escape(str(
-                        finding.get(
-                            "description",
-                            "-"
-                        )
-                    ))}
+                    {_safe_text(description)}
                 </p>
 
                 <h3>AI 판단 근거</h3>
 
                 <p>
-                    {escape(str(
-                        finding.get(
-                            "reason",
-                            "-"
-                        )
-                    ))}
+                    {_safe_text(reason)}
                 </p>
 
-                <h3>개선 방법</h3>
+                <h3>Validation 판단</h3>
 
                 <p>
-                    {escape(str(
-                        finding.get(
-                            "recommendation",
-                            "-"
-                        )
-                    ))}
+                    {_safe_text(validation_reason)}
+                </p>
+
+                <h3>🛠 개선 방법</h3>
+
+                <p>
+                    {_safe_text(recommendation)}
                 </p>
 
             </div>
-            """
+
+        </div>
+        """
+
+        finding_rows.append(
+            row
         )
+
+    findings_html = "\n".join(
+        finding_rows
+    )
+
+    if not findings_html:
+
+        findings_html = """
+        <div class="no-findings">
+            <h2>취약점이 발견되지 않았습니다.</h2>
+            <p>
+                분석 대상 소스코드에서 최종 확인된
+                보안 취약점이 없습니다.
+            </p>
+        </div>
+        """
+
+    # ------------------------------------------------------------
+    # HTML
+    # ------------------------------------------------------------
 
     html = f"""
 <!DOCTYPE html>
@@ -311,7 +406,9 @@ def generate_html_report(findings, output_file=None):
 <meta name="viewport"
       content="width=device-width, initial-scale=1.0">
 
-<title>AI Source Code Security Report</title>
+<title>
+AI Source Code Security Report
+</title>
 
 <style>
 
@@ -321,133 +418,136 @@ def generate_html_report(findings, output_file=None):
 
 body {{
     margin: 0;
-    padding: 0;
-
-    font-family:
-        "Malgun Gothic",
-        "Noto Sans KR",
-        Arial,
-        sans-serif;
-
+    padding: 40px;
     background: #f4f6f8;
     color: #222;
+    font-family:
+        Arial,
+        "Malgun Gothic",
+        sans-serif;
 }}
 
 .container {{
-    width: 1200px;
-    max-width: 95%;
-
-    margin: 40px auto;
+    max-width: 1400px;
+    margin: 0 auto;
 }}
 
 .header {{
-    background: #1f2937;
+    background: #17191c;
     color: white;
-
-    padding: 32px;
-
-    border-radius: 12px;
-
-    margin-bottom: 24px;
+    padding: 38px 42px;
+    border-radius: 14px;
+    margin-bottom: 28px;
 }}
 
 .header h1 {{
-    margin: 0 0 10px 0;
+    margin: 0 0 12px 0;
     font-size: 30px;
 }}
 
 .header p {{
-    margin: 4px 0;
-    color: #d1d5db;
+    margin: 5px 0;
+    color: #d6d6d6;
 }}
 
 .summary {{
     display: grid;
-
     grid-template-columns:
-        repeat(5, 1fr);
-
-    gap: 16px;
-
-    margin-bottom: 24px;
+        repeat(6, 1fr);
+    gap: 14px;
+    margin-bottom: 30px;
 }}
 
-.summary-card {{
+.card {{
     background: white;
-
-    padding: 22px;
-
-    border-radius: 10px;
-
+    border-radius: 12px;
+    padding: 24px;
     box-shadow:
-        0 2px 8px
-        rgba(0, 0, 0, 0.08);
+        0 2px 8px rgba(
+            0,
+            0,
+            0,
+            0.06
+        );
 }}
 
-.summary-card .number {{
-    font-size: 30px;
-    font-weight: bold;
+.card .number {{
+    font-size: 32px;
+    font-weight: 700;
+    margin-bottom: 8px;
 }}
 
-.summary-card .title {{
+.card .label {{
     color: #666;
-    margin-top: 6px;
+    font-size: 14px;
+}}
+
+.card.critical {{
+    border-top: 5px solid #7f1d1d;
+}}
+
+.card.high {{
+    border-top: 5px solid #dc2626;
+}}
+
+.card.medium {{
+    border-top: 5px solid #f59e0b;
+}}
+
+.card.low {{
+    border-top: 5px solid #22c55e;
 }}
 
 .section {{
     background: white;
-
-    padding: 24px;
-
-    border-radius: 12px;
-
-    margin-bottom: 24px;
-
+    border-radius: 14px;
+    padding: 30px;
+    margin-bottom: 25px;
     box-shadow:
-        0 2px 8px
-        rgba(0, 0, 0, 0.06);
+        0 2px 8px rgba(
+            0,
+            0,
+            0,
+            0.06
+        );
 }}
 
 .section h2 {{
     margin-top: 0;
 }}
 
-table {{
-    width: 100%;
-
-    border-collapse: collapse;
+.finding {{
+    border: 1px solid #e2e5e8;
+    border-radius: 12px;
+    margin-bottom: 22px;
+    overflow: hidden;
 }}
 
-th {{
-    background: #f1f3f5;
-
-    padding: 12px;
-
-    text-align: left;
-
-    border-bottom:
-        2px solid #ddd;
+.finding-header {{
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 18px 22px;
+    background: #fafafa;
+    border-bottom: 1px solid #e5e7eb;
 }}
 
-td {{
-    padding: 12px;
+.finding-number {{
+    font-weight: bold;
+    color: #666;
+}}
 
-    border-bottom:
-        1px solid #eee;
-
-    vertical-align: top;
+.finding-title {{
+    flex: 1;
+    font-size: 19px;
+    font-weight: bold;
 }}
 
 .severity {{
-    display: inline-block;
-
-    padding: 4px 9px;
-
-    border-radius: 5px;
-
-    font-weight: bold;
-
+    padding: 6px 13px;
+    border-radius: 20px;
     font-size: 12px;
+    font-weight: bold;
 }}
 
 .severity.critical {{
@@ -457,7 +557,7 @@ td {{
 
 .severity.high {{
     background: #ffedd5;
-    color: #9a3412;
+    color: #c2410c;
 }}
 
 .severity.medium {{
@@ -470,98 +570,86 @@ td {{
     color: #166534;
 }}
 
-.finding-card {{
-    border: 1px solid #ddd;
-
-    border-radius: 10px;
-
-    padding: 24px;
-
-    margin-bottom: 20px;
+.finding-meta {{
+    display: grid;
+    grid-template-columns:
+        repeat(5, 1fr);
+    gap: 15px;
+    padding: 20px 22px;
+    background: white;
 }}
 
-.finding-card h2 {{
+.finding-meta div {{
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}}
+
+.finding-meta strong {{
+    color: #777;
+    font-size: 12px;
+}}
+
+.finding-meta span {{
+    font-size: 14px;
+    word-break: break-all;
+}}
+
+.detail {{
+    padding: 22px;
+    border-top: 1px solid #eee;
+}}
+
+.detail h3 {{
+    margin-top: 22px;
+}}
+
+.detail h3:first-child {{
     margin-top: 0;
 }}
 
-.finding-card h3 {{
-    margin-top: 24px;
-    margin-bottom: 8px;
-}}
-
-.detail-grid {{
-    display: grid;
-
-    grid-template-columns:
-        repeat(3, 1fr);
-
-    gap: 12px;
-
-    background: #f8f9fa;
-
-    padding: 16px;
-
-    border-radius: 8px;
-}}
-
-.detail-grid > div {{
-    display: flex;
-
-    flex-direction: column;
-
-    gap: 4px;
-}}
-
-.label {{
-    font-size: 12px;
-
-    color: #777;
-}}
-
-.value {{
-    font-weight: bold;
+.detail p {{
+    line-height: 1.7;
 }}
 
 pre {{
-    background: #1e1e1e;
-
-    color: #f5f5f5;
-
-    padding: 16px;
-
+    background: #1f2937;
+    color: #f3f4f6;
+    padding: 18px;
     border-radius: 8px;
-
     overflow-x: auto;
-
     white-space: pre-wrap;
+    word-break: break-word;
+}}
+
+.no-findings {{
+    text-align: center;
+    padding: 60px;
 }}
 
 .footer {{
     text-align: center;
-
     color: #888;
-
-    padding: 20px;
+    font-size: 13px;
+    margin-top: 30px;
 }}
 
-@media print {{
+@media (
+    max-width: 1000px
+) {{
 
     body {{
-        background: white;
+        padding: 15px;
     }}
 
-    .container {{
-        width: 100%;
-        max-width: 100%;
-        margin: 0;
+    .summary {{
+        grid-template-columns:
+            repeat(2, 1fr);
     }}
 
-    .header {{
-        border-radius: 0;
-    }}
-
-    .finding-card {{
-        page-break-inside: avoid;
+    .finding-meta {{
+        grid-template-columns:
+            repeat(2, 1fr);
     }}
 
 }}
@@ -586,9 +674,7 @@ pre {{
 
         <p>
             생성일시:
-            {datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S"
-            )}
+            {_safe_text(generated_at)}
         </p>
 
     </div>
@@ -596,49 +682,81 @@ pre {{
 
     <div class="summary">
 
-        <div class="summary-card">
+        <div class="card">
+
             <div class="number">
                 {total_count}
             </div>
-            <div class="title">
+
+            <div class="label">
                 전체 취약점
             </div>
+
         </div>
 
-        <div class="summary-card">
+
+        <div class="card critical">
+
             <div class="number">
                 {critical_count}
             </div>
-            <div class="title">
+
+            <div class="label">
                 Critical
             </div>
+
         </div>
 
-        <div class="summary-card">
+
+        <div class="card high">
+
             <div class="number">
                 {high_count}
             </div>
-            <div class="title">
+
+            <div class="label">
                 High
             </div>
+
         </div>
 
-        <div class="summary-card">
+
+        <div class="card medium">
+
             <div class="number">
                 {medium_count}
             </div>
-            <div class="title">
+
+            <div class="label">
                 Medium
             </div>
+
         </div>
 
-        <div class="summary-card">
+
+        <div class="card low">
+
+            <div class="number">
+                {low_count}
+            </div>
+
+            <div class="label">
+                Low
+            </div>
+
+        </div>
+
+
+        <div class="card">
+
             <div class="number">
                 {confirmed_count}
             </div>
-            <div class="title">
+
+            <div class="label">
                 Confirmed
             </div>
+
         </div>
 
     </div>
@@ -650,47 +768,18 @@ pre {{
             취약점 목록
         </h2>
 
-        <table>
-
-            <thead>
-
-                <tr>
-                    <th>No.</th>
-                    <th>취약점</th>
-                    <th>심각도</th>
-                    <th>파일</th>
-                    <th>라인</th>
-                    <th>탐지 방법</th>
-                    <th>상태</th>
-                </tr>
-
-            </thead>
-
-            <tbody>
-
-                {"".join(rows)}
-
-            </tbody>
-
-        </table>
-
-    </div>
-
-
-    <div class="section">
-
-        <h2>
-            상세 분석 결과
-        </h2>
-
-        {"".join(detail_sections)}
+        {findings_html}
 
     </div>
 
 
     <div class="footer">
 
-        AI Source Code Security Agent
+        AI Source Code Security Analyzer
+
+        <br>
+
+        Rule Scanner + Local Qwen + RAG + Validation
 
     </div>
 
@@ -701,11 +790,15 @@ pre {{
 </html>
 """
 
-    output_file = Path(output_file)
+    # ------------------------------------------------------------
+    # 파일 저장
+    # ------------------------------------------------------------
 
-    output_file.write_text(
+    report_path.write_text(
         html,
         encoding="utf-8"
     )
 
-    return output_file
+    return str(
+        report_path
+        )
