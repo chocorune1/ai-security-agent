@@ -59,6 +59,8 @@ def _merge_detail_fields(target, source):
         "description",
         "reason",
         "recommendation",
+        "attack_scenario",
+        "regression_test",
         "validation_reason",
         "vulnerable_code",
         "fixed_code",
