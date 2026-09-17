@@ -3,7 +3,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog
 import threading
-import time
+import uuid
 
 import streamlit as st
 
@@ -29,31 +29,22 @@ st.set_page_config(
 
 
 # ============================================================
+# 프로세스 수준 Job Store
+# - Streamlit session이 다시 생성되어도 백그라운드 작업을 잃지 않도록
+#   실제 작업 상태는 모듈 전역에 보관합니다.
+# ============================================================
+if "JOB_STORE" not in globals():
+    JOB_STORE = {}
+
+
+# ============================================================
 # Session State
 # ============================================================
 if "source_dir" not in st.session_state:
     st.session_state.source_dir = str(BASE_DIR / "data" / "source")
 
-if "scanning" not in st.session_state:
-    st.session_state.scanning = False
-
-if "scan_result" not in st.session_state:
-    st.session_state.scan_result = None
-
-if "scan_error" not in st.session_state:
-    st.session_state.scan_error = None
-
-if "scan_state" not in st.session_state:
-    st.session_state.scan_state = {
-        "progress": 0,
-        "message": "",
-        "done": False,
-        "result": None,
-        "error": None,
-    }
-
-if "scan_start_time" not in st.session_state:
-    st.session_state.scan_start_time = None
+if "active_job_id" not in st.session_state:
+    st.session_state.active_job_id = None
 
 
 # ============================================================
@@ -72,36 +63,49 @@ def select_folder():
 
 
 # ============================================================
-# 진행상황 업데이트
-# ============================================================
-def update_scan_state(scan_state, progress, message):
-    scan_state["progress"] = progress
-    scan_state["message"] = message
-
-
-# ============================================================
 # Agent 실행 Thread
 # ============================================================
-def run_security_agent(source_path, scan_state):
+def update_job_state(job_id, progress, message):
+    job = JOB_STORE.get(job_id)
+    if job is None:
+        return
+
+    job["progress"] = max(0, min(100, int(progress)))
+    job["message"] = message or ""
+
+
+def run_security_agent(job_id, source_path):
     try:
         from agent.security_agent import SecurityAgent
 
-        agent = SecurityAgent(source_dir=str(source_path))
+        job = JOB_STORE.get(job_id)
+        if job is None:
+            return
 
+        job["stage"] = "Source Analyzer"
+        job["message"] = "소스코드를 수집하고 있습니다..."
+        job["progress"] = 5
+
+        agent = SecurityAgent(source_dir=str(source_path))
         result = agent.run(
-            progress_callback=lambda progress, message: update_scan_state(
-                scan_state, progress, message
+            progress_callback=lambda progress, message: update_job_state(
+                job_id, progress, message
             )
         )
 
-        scan_state["progress"] = 100
-        scan_state["message"] = "보안점검이 완료되었습니다."
-        scan_state["result"] = result
-        scan_state["done"] = True
+        job["progress"] = 100
+        job["stage"] = "완료"
+        job["message"] = "보안점검이 완료되었습니다."
+        job["result"] = result
+        job["done"] = True
 
     except Exception as e:
-        scan_state["error"] = e
-        scan_state["done"] = True
+        job = JOB_STORE.get(job_id)
+        if job is not None:
+            job["error"] = e
+            job["stage"] = "오류"
+            job["message"] = "보안점검 중 오류가 발생했습니다."
+            job["done"] = True
 
 
 # ============================================================
@@ -111,38 +115,115 @@ def start_scan():
     source_path = Path(st.session_state.source_dir)
 
     if not source_path.exists():
-        st.session_state.scan_error = RuntimeError(
-            f"소스 경로를 찾을 수 없습니다: {source_path}"
-        )
+        st.error(f"소스 경로를 찾을 수 없습니다: {source_path}")
         return
 
     if not source_path.is_dir():
-        st.session_state.scan_error = RuntimeError(
-            f"입력한 경로가 폴더가 아닙니다: {source_path}"
-        )
+        st.error(f"입력한 경로가 폴더가 아닙니다: {source_path}")
         return
 
-    st.session_state.scanning = True
-    st.session_state.scan_result = None
-    st.session_state.scan_error = None
-    st.session_state.scan_start_time = time.time()
+    job_id = str(uuid.uuid4())
 
-    scan_state = {
-        "progress": 5,
+    JOB_STORE[job_id] = {
+        "progress": 0,
+        "stage": "준비",
         "message": "보안점검을 준비하고 있습니다...",
         "done": False,
         "result": None,
         "error": None,
     }
 
-    st.session_state.scan_state = scan_state
+    st.session_state.active_job_id = job_id
 
-    scan_thread = threading.Thread(
+    thread = threading.Thread(
         target=run_security_agent,
-        args=(source_path, scan_state),
+        args=(job_id, source_path),
         daemon=True,
     )
-    scan_thread.start()
+    thread.start()
+
+
+# ============================================================
+# 결과 표시
+# ============================================================
+def show_result(result):
+    if not isinstance(result, dict):
+        st.warning("분석 결과 형식이 올바르지 않습니다.")
+        return
+
+    findings = result.get("findings") or result.get("vulnerabilities") or []
+    report_path = result.get("report_path") or result.get("html_report")
+
+    st.success("보안점검이 완료되었습니다.")
+
+    if findings:
+        st.subheader("🔎 취약점 목록")
+        rows = []
+        for index, finding in enumerate(findings, 1):
+            rows.append(
+                {
+                    "No.": index,
+                    "취약점": finding.get("type", "-"),
+                    "Severity": finding.get("severity", "-"),
+                    "파일": finding.get("file", "-"),
+                    "라인": finding.get("line", "-"),
+                    "상태": finding.get("status", "-"),
+                    "신뢰도": finding.get("confidence", "-"),
+                }
+            )
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+    else:
+        st.info("취약점이 발견되지 않았습니다.")
+
+    if report_path:
+        st.subheader("📄 HTML 리포트")
+        st.code(str(report_path), language="text")
+
+        report_file = Path(report_path)
+        if report_file.exists():
+            st.download_button(
+                "📥 HTML 리포트 다운로드",
+                data=report_file.read_bytes(),
+                file_name=report_file.name,
+                mime="text/html",
+                use_container_width=True,
+            )
+
+
+# ============================================================
+# 진행 화면
+# ============================================================
+def render_scan_progress(job_id):
+    job = JOB_STORE.get(job_id)
+
+    if job is None:
+        st.warning("점검 작업 정보를 찾을 수 없습니다. 다시 실행해 주세요.")
+        st.session_state.active_job_id = None
+        return
+
+    st.divider()
+    st.subheader("🔍 보안점검 진행 상황")
+
+    progress = int(job.get("progress", 0))
+    stage = job.get("stage", "분석 중")
+    message = job.get("message", "")
+
+    st.progress(progress)
+    st.write(f"**현재 단계:** {stage}")
+    st.info(message)
+
+    if job.get("error") is not None:
+        st.error(str(job["error"]))
+        st.session_state.active_job_id = None
+        return
+
+    if job.get("done"):
+        result = job.get("result")
+        st.session_state.active_job_id = None
+        show_result(result)
+        return
+
+    st.caption("분석이 진행 중입니다. 이 화면은 자동으로 갱신됩니다.")
 
 
 # ============================================================
@@ -152,19 +233,17 @@ st.title("🔐 AI Source Security Analyzer")
 st.write("Java / JavaScript / JSP 소스코드를 AI 기반으로 보안 점검합니다.")
 st.divider()
 
-
-# ============================================================
-# 소스 코드 경로
-# ============================================================
 st.subheader("소스 코드")
-
 col1, col2 = st.columns([5, 1])
+
+active_job_id = st.session_state.active_job_id
+is_scanning = bool(active_job_id and active_job_id in JOB_STORE and not JOB_STORE[active_job_id].get("done"))
 
 with col1:
     st.text_input(
         "소스 코드 경로",
         key="source_dir",
-        disabled=st.session_state.scanning,
+        disabled=is_scanning,
         label_visibility="collapsed",
     )
 
@@ -172,7 +251,7 @@ with col2:
     st.button(
         "📁 폴더 선택",
         on_click=select_folder,
-        disabled=st.session_state.scanning,
+        disabled=is_scanning,
         use_container_width=True,
     )
 
@@ -181,196 +260,35 @@ st.caption(
 )
 st.divider()
 
-
-# ============================================================
-# 보안점검 시작 버튼
-# ============================================================
 st.button(
     "🔍 보안 점검 시작",
     on_click=start_scan,
-    disabled=st.session_state.scanning,
+    disabled=is_scanning,
     type="primary",
     use_container_width=True,
 )
 
 
 # ============================================================
-# 보안점검 진행
+# Streamlit Fragment 기반 진행상황 Polling
+# while + sleep으로 전체 Streamlit 실행을 붙잡지 않습니다.
 # ============================================================
-if st.session_state.scanning:
-    st.divider()
-    st.subheader("🔍 보안점검 진행 상황")
+if st.session_state.active_job_id:
+    if hasattr(st, "fragment"):
 
-    progress_placeholder = st.empty()
-    status_placeholder = st.empty()
-    stage_placeholder = st.empty()
-    elapsed_placeholder = st.empty()
+        @st.fragment(run_every="0.5s")
+        def scan_progress_fragment():
+            job_id = st.session_state.active_job_id
+            if job_id:
+                render_scan_progress(job_id)
 
-    scan_state = st.session_state.scan_state
+        scan_progress_fragment()
 
-    while not scan_state["done"]:
-        current_progress = scan_state.get("progress", 0)
-        current_message = scan_state.get(
-            "message", "보안점검을 준비하고 있습니다..."
-        )
-
-        progress_placeholder.progress(current_progress)
-        status_placeholder.info("🔄 " + current_message)
-
-        if current_progress < 20:
-            current_stage = "① 소스코드 수집"
-        elif current_progress < 40:
-            current_stage = "② Rule 기반 보안점검"
-        elif current_progress < 65:
-            current_stage = "③ Qwen AI 보안 분석"
-        elif current_progress < 80:
-            current_stage = "④ Rule 탐지 결과 AI 검증"
-        elif current_progress < 90:
-            current_stage = "⑤ 보안점검 결과 통합"
-        elif current_progress < 100:
-            current_stage = "⑥ HTML 리포트 생성"
-        else:
-            current_stage = "✓ 보안점검 완료"
-
-        stage_placeholder.write(f"**현재 단계:** {current_stage}")
-
-        if st.session_state.scan_start_time:
-            elapsed_seconds = int(
-                time.time() - st.session_state.scan_start_time
-            )
-            elapsed_placeholder.caption(f"⏱ 경과 시간: {elapsed_seconds}초")
-
-        if scan_state.get("error"):
-            st.session_state.scan_error = scan_state["error"]
-            st.session_state.scanning = False
-            break
-
-        time.sleep(0.3)
-
-    # --------------------------------------------------------
-    # 완료/오류 상태를 Session State에 먼저 저장한 뒤 즉시 rerun
-    # --------------------------------------------------------
-    if scan_state.get("error"):
-        st.session_state.scan_error = scan_state["error"]
-        st.session_state.scanning = False
-        st.rerun()
-
-    st.session_state.scan_result = scan_state.get("result")
-    st.session_state.scanning = False
-
-    # 중요:
-    # 현재 실행에서는 이미 위쪽의 입력창/버튼이 disabled 상태로 렌더링되었습니다.
-    # scanning=False만 변경하면 화면의 기존 위젯 상태가 즉시 바뀌지 않습니다.
-    # rerun을 통해 화면 전체를 다시 그려 입력창/폴더선택/점검버튼을 활성화합니다.
-    st.rerun()
-
-
-# ============================================================
-# 오류 표시
-# ============================================================
-if st.session_state.scan_error is not None:
-    st.error("보안점검 중 오류가 발생했습니다.")
-    st.exception(st.session_state.scan_error)
-
-
-# ============================================================
-# 결과 표시
-# ============================================================
-result = st.session_state.scan_result
-
-if result is not None:
-    findings = result.get("findings", [])
-    report_file = result.get("report_file")
-    source_count = result.get("source_count", 0)
-
-    st.divider()
-    st.subheader("점검 결과")
-
-    critical_count = sum(
-        1 for finding in findings if finding.get("severity") == "CRITICAL"
-    )
-    high_count = sum(
-        1 for finding in findings if finding.get("severity") == "HIGH"
-    )
-    medium_count = sum(
-        1 for finding in findings if finding.get("severity") == "MEDIUM"
-    )
-    low_count = sum(
-        1 for finding in findings if finding.get("severity") == "LOW"
-    )
-
-    col1, col2, col3, col4, col5 = st.columns(5)
-    col1.metric("분석 파일", source_count)
-    col2.metric("전체 취약점", len(findings))
-    col3.metric("Critical", critical_count)
-    col4.metric("High", high_count)
-    col5.metric("Medium", medium_count)
-
-    st.subheader("취약점 목록")
-
-    if not findings:
-        st.success("취약점이 발견되지 않았습니다.")
     else:
-        for index, finding in enumerate(findings, start=1):
-            vulnerability_type = finding.get("type", "-")
-            severity = finding.get("severity", "-")
-            file_name = finding.get("file", "-")
-            line = finding.get("line", "-")
-
-            with st.expander(
-                f"{index}. {vulnerability_type} [{severity}] {file_name}:{line}"
-            ):
-                col1, col2, col3 = st.columns(3)
-
-                with col1:
-                    st.write("**심각도**")
-                    st.write(severity)
-
-                with col2:
-                    st.write("**상태**")
-                    st.write(finding.get("status", "-"))
-
-                with col3:
-                    st.write("**신뢰도**")
-                    st.write(finding.get("confidence", "-"))
-
-                st.write(f"**탐지 방법:** {finding.get('detection', '-')}")
-                st.write(f"**파일:** {file_name}")
-                st.write(f"**라인:** {line}")
-
-                st.markdown("#### 🔎 증거")
-                st.code(finding.get("evidence", "-"), language="text")
-
-                st.markdown("#### 설명")
-                st.write(finding.get("description", "-"))
-
-                st.markdown("#### AI 판단 근거")
-                st.write(finding.get("reason", "-"))
-
-                st.markdown("#### 🛠 개선 방법")
-                st.write(finding.get("recommendation", "-"))
-
-    # ========================================================
-    # HTML 리포트
-    # ========================================================
-    if report_file:
-        st.divider()
-        st.subheader("HTML 리포트")
-        st.success("HTML 보안 리포트가 생성되었습니다.")
-
-        report_path = Path(report_file)
-        st.code(str(report_path), language="text")
-
-        # 리포트 파일이 실제로 존재하면 버튼을 활성화합니다.
-        # 현재 파일이 없거나 접근할 수 없는 경우에는 경로만 보여줍니다.
-        if report_path.exists() and report_path.is_file():
-            with open(report_path, "rb") as report_fp:
-                st.download_button(
-                    label="📄 HTML 리포트 열기/저장",
-                    data=report_fp.read(),
-                    file_name=report_path.name,
-                    mime="text/html",
-                    use_container_width=True,
-                )
-        else:
-            st.caption("리포트 파일을 찾을 수 없어 다운로드 버튼을 표시하지 않습니다.")
+        # 구버전 Streamlit에서는 자동 polling을 사용할 수 없습니다.
+        # 분석 자체는 백그라운드 Thread에서 계속 실행됩니다.
+        render_scan_progress(st.session_state.active_job_id)
+        st.warning(
+            "현재 Streamlit 버전에서는 자동 진행상황 갱신을 지원하지 않습니다. "
+            "가능하면 Streamlit을 최신 버전으로 업데이트해 주세요."
+        )
