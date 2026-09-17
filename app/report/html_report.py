@@ -115,8 +115,8 @@ pre{{background:#1f2937;color:#f3f4f6;padding:16px;border-radius:8px;overflow:au
 <div class="card"><div class="number">{confirmed}</div><div class="label">Confirmed</div></div>
 </div>
 <section><h2>취약점 목록</h2>{findings_html}</section>
-{('<div class="fix-footer-note">최종 취약점으로 확정되지 않아 수정 코드 예시를 생성하지 않았습니다.</div>' if any(_status(f.get("status")) not in {"CONFIRMED", "AI_CONFIRMED"} for f in findings) else '')}
-<div class="footer">AI Source Code Security Analyzer · Rule Scanner + Local Qwen + RAG + Validation</div>
+{('<div class="fix-footer-note">최종 취약점으로 확정되지 않은 건은 수정 코드 예시를 생성하지 않았습니다.</div>' if any(_status(f.get("status")) not in {"CONFIRMED", "AI_CONFIRMED"} for f in findings) else '')}
+<div class="footer">AI Source Code Security Analyzer · Rule Scanner + Qwen + RAG + Validation</div>
 </div></body></html>"""
 
     report_path.write_text(html, encoding="utf-8")
