@@ -195,39 +195,51 @@ st.button(
 
 
 # ============================================================
-# 보안점검 진행
+# 보안점검 진행 상황
+#
+# 기존에는 while + sleep()으로 Streamlit 전체 실행을 붙잡고
+# 0.3초마다 화면을 다시 그렸습니다.
+#
+# 파일 수가 많아지면 점검 Thread는 정상적으로 진행되더라도
+# 웹 세션의 렌더링이 계속 발생하여 화면이 멈춘 것처럼
+# 보이는 문제가 발생할 수 있습니다.
+#
+# st.fragment(run_every=...)를 사용하여 진행상황 영역만
+# 주기적으로 갱신하고, 전체 앱은 점검 완료 시에만 rerun합니다.
 # ============================================================
 if st.session_state.scanning:
     st.divider()
     st.subheader("🔍 보안점검 진행 상황")
 
-    progress_placeholder = st.empty()
-    status_placeholder = st.empty()
-    stage_placeholder = st.empty()
-    elapsed_placeholder = st.empty()
+    @st.fragment(run_every=0.5)
+    def render_scan_progress():
+        scan_state = st.session_state.scan_state
 
-    scan_state = st.session_state.scan_state
-
-    while not scan_state["done"]:
-        current_progress = scan_state.get("progress", 0)
-        current_message = scan_state.get(
-            "message", "보안점검을 준비하고 있습니다..."
+        progress = scan_state.get("progress", 0)
+        message = scan_state.get(
+            "message",
+            "보안점검을 준비하고 있습니다..."
         )
 
-        progress_placeholder.progress(current_progress)
-        status_placeholder.info("🔄 " + current_message)
+        progress_placeholder = st.empty()
+        status_placeholder = st.empty()
+        stage_placeholder = st.empty()
+        elapsed_placeholder = st.empty()
 
-        if current_progress < 20:
+        progress_placeholder.progress(progress)
+        status_placeholder.info("🔄 " + message)
+
+        if progress < 20:
             current_stage = "① 소스코드 수집"
-        elif current_progress < 40:
+        elif progress < 40:
             current_stage = "② Rule 기반 보안점검"
-        elif current_progress < 65:
+        elif progress < 65:
             current_stage = "③ Qwen AI 보안 분석"
-        elif current_progress < 80:
+        elif progress < 80:
             current_stage = "④ Rule 탐지 결과 AI 검증"
-        elif current_progress < 90:
+        elif progress < 90:
             current_stage = "⑤ 보안점검 결과 통합"
-        elif current_progress < 100:
+        elif progress < 100:
             current_stage = "⑥ HTML 리포트 생성"
         else:
             current_stage = "✓ 보안점검 완료"
@@ -238,31 +250,31 @@ if st.session_state.scanning:
             elapsed_seconds = int(
                 time.time() - st.session_state.scan_start_time
             )
-            elapsed_placeholder.caption(f"⏱ 경과 시간: {elapsed_seconds}초")
+            elapsed_placeholder.caption(
+                f"⏱ 경과 시간: {elapsed_seconds}초"
+            )
 
+        # ----------------------------------------------------
+        # 오류
+        # ----------------------------------------------------
         if scan_state.get("error"):
             st.session_state.scan_error = scan_state["error"]
             st.session_state.scanning = False
-            break
+            st.rerun()
+            return
 
-        time.sleep(0.3)
+        # ----------------------------------------------------
+        # 완료
+        # ----------------------------------------------------
+        if scan_state.get("done"):
+            st.session_state.scan_result = scan_state.get("result")
+            st.session_state.scanning = False
 
-    # --------------------------------------------------------
-    # 완료/오류 상태를 Session State에 먼저 저장한 뒤 즉시 rerun
-    # --------------------------------------------------------
-    if scan_state.get("error"):
-        st.session_state.scan_error = scan_state["error"]
-        st.session_state.scanning = False
-        st.rerun()
+            # 완료 시 전체 앱을 한 번만 다시 그립니다.
+            # 이 rerun으로 "보안 점검 시작" 버튼도 다시 활성화됩니다.
+            st.rerun()
 
-    st.session_state.scan_result = scan_state.get("result")
-    st.session_state.scanning = False
-
-    # 중요:
-    # 현재 실행에서는 이미 위쪽의 입력창/버튼이 disabled 상태로 렌더링되었습니다.
-    # scanning=False만 변경하면 화면의 기존 위젯 상태가 즉시 바뀌지 않습니다.
-    # rerun을 통해 화면 전체를 다시 그려 입력창/폴더선택/점검버튼을 활성화합니다.
-    st.rerun()
+    render_scan_progress()
 
 
 # ============================================================
