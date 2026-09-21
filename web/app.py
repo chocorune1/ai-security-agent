@@ -260,20 +260,25 @@ st.caption(
 )
 st.divider()
 
-st.button(
+start_clicked = st.button(
     "🔍 보안 점검 시작",
-    on_click=start_scan,
     disabled=is_scanning,
     type="primary",
     use_container_width=True,
 )
+
+# 버튼 클릭을 현재 실행 사이클에서 직접 처리합니다.
+# on_click 콜백보다 먼저 화면 상태를 확실히 반영할 수 있어
+# 클릭 직후 버튼 비활성화 및 진행 화면 표시가 가능합니다.
+if start_clicked:
+    start_scan()
 
 
 # ============================================================
 # Streamlit Fragment 기반 진행상황 Polling
 # while + sleep으로 전체 Streamlit 실행을 붙잡지 않습니다.
 # ============================================================
-if st.session_state.active_job_id:
+if st.session_state.active_job_id and not start_clicked:
     if hasattr(st, "fragment"):
 
         @st.fragment(run_every="0.5s")
