@@ -35,6 +35,10 @@ st.set_page_config(
 # ============================================================
 if "JOB_STORE" not in globals():
     JOB_STORE = {}
+if "JOB_LOCK" not in globals():
+    JOB_LOCK = threading.RLock()
+if "ACTIVE_JOB_ID" not in globals():
+    ACTIVE_JOB_ID = None
 
 
 # ============================================================
@@ -66,25 +70,27 @@ def select_folder():
 # Agent 실행 Thread
 # ============================================================
 def update_job_state(job_id, progress, message):
-    job = JOB_STORE.get(job_id)
-    if job is None:
-        return
-
-    job["progress"] = max(0, min(100, int(progress)))
-    job["message"] = message or ""
+    with JOB_LOCK:
+        job = JOB_STORE.get(job_id)
+        if job is None or job.get("done"):
+            return
+        job["progress"] = max(0, min(100, int(progress)))
+        job["message"] = message or ""
 
 
 def run_security_agent(job_id, source_path):
     try:
         from agent.security_agent import SecurityAgent
 
-        job = JOB_STORE.get(job_id)
+        with JOB_LOCK:
+            job = JOB_STORE.get(job_id)
         if job is None:
             return
 
-        job["stage"] = "Source Analyzer"
-        job["message"] = "소스코드를 수집하고 있습니다..."
-        job["progress"] = 5
+        with JOB_LOCK:
+            job["stage"] = "Source Analyzer"
+            job["message"] = "소스코드를 수집하고 있습니다..."
+            job["progress"] = 5
 
         agent = SecurityAgent(source_dir=str(source_path))
         result = agent.run(
@@ -93,25 +99,29 @@ def run_security_agent(job_id, source_path):
             )
         )
 
-        job["progress"] = 100
-        job["stage"] = "완료"
-        job["message"] = "보안점검이 완료되었습니다."
-        job["result"] = result
-        job["done"] = True
+        with JOB_LOCK:
+            job["progress"] = 100
+            job["stage"] = "완료"
+            job["message"] = "보안점검이 완료되었습니다."
+            job["result"] = result
+            job["done"] = True
 
     except Exception as e:
-        job = JOB_STORE.get(job_id)
-        if job is not None:
-            job["error"] = e
-            job["stage"] = "오류"
-            job["message"] = "보안점검 중 오류가 발생했습니다."
-            job["done"] = True
+        with JOB_LOCK:
+            job = JOB_STORE.get(job_id)
+            if job is not None:
+                job["error"] = e
+                job["stage"] = "오류"
+                job["message"] = "보안점검 중 오류가 발생했습니다."
+                job["done"] = True
 
 
 # ============================================================
 # 보안점검 시작
 # ============================================================
 def start_scan():
+    global ACTIVE_JOB_ID
+
     source_path = Path(st.session_state.source_dir)
 
     if not source_path.exists():
@@ -123,15 +133,21 @@ def start_scan():
         return
 
     job_id = str(uuid.uuid4())
+    with JOB_LOCK:
+        if ACTIVE_JOB_ID and not JOB_STORE.get(ACTIVE_JOB_ID, {}).get("done"):
+            st.session_state.active_job_id = ACTIVE_JOB_ID
+            st.warning("이미 보안점검이 진행 중입니다.")
+            return False
 
-    JOB_STORE[job_id] = {
-        "progress": 0,
-        "stage": "준비",
-        "message": "보안점검을 준비하고 있습니다...",
-        "done": False,
-        "result": None,
-        "error": None,
-    }
+        JOB_STORE[job_id] = {
+            "progress": 0,
+            "stage": "준비",
+            "message": "보안점검을 준비하고 있습니다...",
+            "done": False,
+            "result": None,
+            "error": None,
+        }
+        ACTIVE_JOB_ID = job_id
 
     st.session_state.active_job_id = job_id
 
@@ -141,6 +157,7 @@ def start_scan():
         daemon=True,
     )
     thread.start()
+    return True
 
 
 # ============================================================
@@ -194,7 +211,9 @@ def show_result(result):
 # 진행 화면
 # ============================================================
 def render_scan_progress(job_id):
-    job = JOB_STORE.get(job_id)
+    with JOB_LOCK:
+        stored_job = JOB_STORE.get(job_id)
+        job = dict(stored_job) if stored_job is not None else None
 
     if job is None:
         st.warning("점검 작업 정보를 찾을 수 없습니다. 다시 실행해 주세요.")
@@ -215,15 +234,24 @@ def render_scan_progress(job_id):
     if job.get("error") is not None:
         st.error(str(job["error"]))
         st.session_state.active_job_id = None
+        clear_active_job(job_id)
         return
 
     if job.get("done"):
         result = job.get("result")
         st.session_state.active_job_id = None
+        clear_active_job(job_id)
         show_result(result)
         return
 
     st.caption("분석이 진행 중입니다. 이 화면은 자동으로 갱신됩니다.")
+
+
+def clear_active_job(job_id):
+    global ACTIVE_JOB_ID
+    with JOB_LOCK:
+        if ACTIVE_JOB_ID == job_id:
+            ACTIVE_JOB_ID = None
 
 
 # ============================================================
@@ -236,8 +264,15 @@ st.divider()
 st.subheader("소스 코드")
 col1, col2 = st.columns([5, 1])
 
-active_job_id = st.session_state.active_job_id
-is_scanning = bool(active_job_id and active_job_id in JOB_STORE and not JOB_STORE[active_job_id].get("done"))
+with JOB_LOCK:
+    active_job_id = st.session_state.active_job_id or ACTIVE_JOB_ID
+    active_job = JOB_STORE.get(active_job_id) if active_job_id else None
+    is_scanning = bool(active_job and not active_job.get("done"))
+    if active_job_id and not active_job:
+        st.session_state.active_job_id = None
+        active_job_id = None
+    elif is_scanning:
+        st.session_state.active_job_id = active_job_id
 
 with col1:
     st.text_input(
@@ -271,7 +306,10 @@ start_clicked = st.button(
 # on_click 콜백보다 먼저 화면 상태를 확실히 반영할 수 있어
 # 클릭 직후 버튼 비활성화 및 진행 화면 표시가 가능합니다.
 if start_clicked:
-    start_scan()
+    if start_scan():
+        # Re-run immediately so the disabled state and progress fragment are
+        # rendered while the scanner continues in its worker thread.
+        st.rerun()
 
 
 # ============================================================
