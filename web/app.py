@@ -30,15 +30,6 @@ st.set_page_config(
 
 
 # ============================================================
-# 프로세스 수준 Job Store
-# - Streamlit session이 다시 생성되어도 백그라운드 작업을 잃지 않도록
-#   실제 작업 상태는 모듈 전역에 보관합니다.
-# ============================================================
-if "JOB_STORE" not in globals():
-    JOB_STORE = {}
-
-
-# ============================================================
 # Session State
 # ============================================================
 if "source_dir" not in st.session_state:
@@ -46,6 +37,14 @@ if "source_dir" not in st.session_state:
 
 if "active_job_id" not in st.session_state:
     st.session_state.active_job_id = None
+
+# Streamlit은 화면을 다시 그릴 때 스크립트를 새 모듈에서 실행하므로
+# 모듈 전역 변수는 rerun 사이에 유지되지 않습니다. Job Store를 세션
+# 상태에 보관해 백그라운드 Thread와 이후 화면 실행이 같은 객체를 봅니다.
+if "scan_jobs" not in st.session_state:
+    st.session_state.scan_jobs = {}
+
+JOB_STORE = st.session_state.scan_jobs
 
 
 # ============================================================
