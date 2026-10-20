@@ -3,6 +3,7 @@ from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog
 import threading
+import time
 import uuid
 
 import streamlit as st
@@ -272,13 +273,16 @@ start_clicked = st.button(
 # 클릭 직후 버튼 비활성화 및 진행 화면 표시가 가능합니다.
 if start_clicked:
     start_scan()
+    # Re-render immediately so the start button becomes disabled and the
+    # progress fragment is registered on the first run after starting a job.
+    st.rerun()
 
 
 # ============================================================
 # Streamlit Fragment 기반 진행상황 Polling
 # while + sleep으로 전체 Streamlit 실행을 붙잡지 않습니다.
 # ============================================================
-if st.session_state.active_job_id and not start_clicked:
+if st.session_state.active_job_id:
     if hasattr(st, "fragment"):
 
         @st.fragment(run_every="0.5s")
@@ -290,10 +294,11 @@ if st.session_state.active_job_id and not start_clicked:
         scan_progress_fragment()
 
     else:
-        # 구버전 Streamlit에서는 자동 polling을 사용할 수 없습니다.
-        # 분석 자체는 백그라운드 Thread에서 계속 실행됩니다.
-        render_scan_progress(st.session_state.active_job_id)
-        st.warning(
-            "현재 Streamlit 버전에서는 자동 진행상황 갱신을 지원하지 않습니다. "
-            "가능하면 Streamlit을 최신 버전으로 업데이트해 주세요."
-        )
+        # 구버전 Streamlit 호환: 화면을 1초 간격으로 다시 그려 진행률을
+        # 갱신합니다. 작업 자체는 별도 Thread에서 계속 실행됩니다.
+        job_id = st.session_state.active_job_id
+        render_scan_progress(job_id)
+        job = JOB_STORE.get(job_id)
+        if job is not None and not job.get("done"):
+            time.sleep(1)
+            st.rerun()
