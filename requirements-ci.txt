@@ -1,0 +1,4 @@
+chromadb>=0.5.23,<1.0
+joblib>=1.4,<2.0
+requests>=2.32,<3.0
+scikit-learn>=1.5,<2.0

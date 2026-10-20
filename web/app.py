@@ -1,7 +1,4 @@
 import sys
-import re
-import threading
-import uuid
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog
@@ -43,12 +40,6 @@ if "scan_requested" not in st.session_state:
     st.session_state.scan_requested = False
 if "scan_running" not in st.session_state:
     st.session_state.scan_running = False
-if "chat_messages" not in st.session_state:
-    st.session_state.chat_messages = []
-if "chat_scan_pending" not in st.session_state:
-    st.session_state.chat_scan_pending = False
-if "active_scan_job_id" not in st.session_state:
-    st.session_state.active_scan_job_id = None
 
 should_run_scan = st.session_state.scan_requested
 if should_run_scan:
@@ -80,23 +71,9 @@ def request_scan():
     st.session_state.scan_requested = True
 
 
-@st.cache_resource
-def get_scan_job_store():
-    """Keep worker state outside Streamlit session state across reruns."""
-    return {"jobs": {}, "lock": threading.RLock()}
+def run_security_agent(source_path, progress_bar, stage_display, message_display):
+    from agent.security_agent import SecurityAgent
 
-
-SCAN_JOB_STORE = get_scan_job_store()
-
-
-def update_scan_job(job_id, **updates):
-    with SCAN_JOB_STORE["lock"]:
-        job = SCAN_JOB_STORE["jobs"].get(job_id)
-        if job is not None:
-            job.update(updates)
-
-
-def run_security_agent_in_background(job_id, source_path):
     def update_progress(progress, message):
         progress = max(0, min(100, int(progress)))
         if progress < 15:
@@ -113,185 +90,47 @@ def run_security_agent_in_background(job_id, source_path):
             stage = "HTML 리포트 생성"
         else:
             stage = "완료"
-        update_scan_job(
-            job_id,
-            progress=progress,
-            stage=stage,
-            message=message or "분석 중입니다...",
-        )
 
-    try:
-        from agent.security_agent import SecurityAgent
+        progress_bar.progress(progress)
+        stage_display.write(f"**현재 단계:** {stage}")
+        message_display.info(message or "분석 중입니다...")
 
-        result = SecurityAgent(source_dir=str(source_path)).run(
-            progress_callback=update_progress
-        )
-        update_scan_job(job_id, status="done", result=result, error=None)
-    except Exception as error:
-        update_scan_job(job_id, status="done", result=None, error=str(error))
+    agent = SecurityAgent(source_dir=str(source_path))
+    return agent.run(progress_callback=update_progress)
 
 
-def finish_chat_scan():
-    if not st.session_state.chat_scan_pending:
-        return
-
-    st.session_state.chat_scan_pending = False
-    if st.session_state.scan_error:
-        reply = f"보안점검을 완료하지 못했습니다: {st.session_state.scan_error}"
-    else:
-        result = st.session_state.scan_result or {}
-        findings = result.get("findings") or []
-        counts = {}
-        for finding in findings:
-            severity = str(finding.get("severity") or "미분류").upper()
-            counts[severity] = counts.get(severity, 0) + 1
-        severity_summary = ", ".join(
-            f"{severity} {count}건" for severity, count in counts.items()
-        ) or "취약점이 발견되지 않았습니다"
-        report_file = result.get("report_file")
-        reply = (
-            f"보안점검을 완료했습니다. 분석 파일 {result.get('source_count', 0)}개, "
-            f"취약점 {len(findings)}건({severity_summary})."
-        )
-        if report_file:
-            reply += f" 보고서: {report_file}"
-    st.session_state.chat_messages.append(
-        {"role": "assistant", "content": reply}
-    )
-
-
-def start_scan_job():
+def execute_scan():
     source_path = Path(st.session_state.source_dir).expanduser()
 
     if not source_path.exists():
         st.session_state.scan_error = f"소스 경로를 찾을 수 없습니다: {source_path}"
         st.session_state.scan_running = False
-        finish_chat_scan()
         return
 
     if not source_path.is_dir():
         st.session_state.scan_error = f"입력한 경로가 폴더가 아닙니다: {source_path}"
         st.session_state.scan_running = False
-        finish_chat_scan()
         return
 
-    job_id = str(uuid.uuid4())
-    with SCAN_JOB_STORE["lock"]:
-        SCAN_JOB_STORE["jobs"][job_id] = {
-            "status": "running",
-            "progress": 0,
-            "stage": "준비",
-            "message": "보안점검을 시작하고 있습니다...",
-            "result": None,
-            "error": None,
-        }
-    st.session_state.active_scan_job_id = job_id
-    st.session_state.scan_running = True
-    worker = threading.Thread(
-        target=run_security_agent_in_background,
-        args=(job_id, source_path),
-        daemon=True,
-    )
-    worker.start()
-
-
-def get_scan_job(job_id):
-    with SCAN_JOB_STORE["lock"]:
-        job = SCAN_JOB_STORE["jobs"].get(job_id)
-        return dict(job) if job is not None else None
-
-
-def publish_scan_job(job_id):
-    job = get_scan_job(job_id)
-    if not job or job.get("status") != "done":
-        return False
-
-    st.session_state.scan_result = job.get("result")
-    st.session_state.scan_error = job.get("error")
-    st.session_state.scan_running = False
-    st.session_state.active_scan_job_id = None
-    finish_chat_scan()
-    with SCAN_JOB_STORE["lock"]:
-        SCAN_JOB_STORE["jobs"].pop(job_id, None)
-    return True
-
-
-def rerun_app():
-    if hasattr(st, "fragment"):
-        st.rerun(scope="app")
-    elif hasattr(st, "rerun"):
-        st.rerun()
-    else:
-        st.experimental_rerun()
-
-
-def render_scan_progress_contents(job_id):
-    job = get_scan_job(job_id)
-    if job is None:
-        st.warning("점검 작업 정보를 찾을 수 없습니다. 다시 실행해 주세요.")
-        st.session_state.scan_running = False
-        st.session_state.active_scan_job_id = None
-        rerun_app()
-
+    st.divider()
     st.subheader("🔍 보안점검 진행 상황")
-    st.progress(int(job.get("progress", 0)))
-    st.write(f"**현재 단계:** {job.get('stage', '분석 중')}")
-    st.info(job.get("message") or "분석 중입니다...")
+    progress_bar = st.progress(0)
+    stage_display = st.empty()
+    message_display = st.empty()
+    stage_display.write("**현재 단계:** 준비")
+    message_display.info("보안점검을 시작하고 있습니다...")
 
-    if job.get("status") == "done" and publish_scan_job(job_id):
-        rerun_app()
-
-
-def render_scan_progress():
-    job_id = st.session_state.active_scan_job_id
-    if not job_id:
-        return
-
-    if hasattr(st, "fragment"):
-        @st.fragment(run_every="1s")
-        def progress_fragment():
-            render_scan_progress_contents(job_id)
-
-        progress_fragment()
-    else:
-        render_scan_progress_contents(job_id)
-        st.caption(
-            "현재 Streamlit 버전은 자동 진행 갱신을 지원하지 않습니다. "
-            "채팅을 계속 사용할 수 있으며, 화면이 다시 그려질 때 진행 상황이 갱신됩니다."
+    try:
+        st.session_state.scan_result = run_security_agent(
+            source_path,
+            progress_bar,
+            stage_display,
+            message_display,
         )
-
-
-def is_scan_request(message):
-    text = message.strip().lower()
-    if text.startswith("/scan"):
-        return True
-    return bool(
-        re.search(
-            r"(?:보안\s*점검|취약점\s*점검|점검|스캔|security\s*scan)"
-            r".{0,24}(?:해줘|해주세요|실행|시작|돌려|해봐)|"
-            r"(?:점검|스캔)해\s*(?:줘|주세요)",
-            text,
-        )
-    )
-
-
-def answer_chat(message):
-    from llm.qwen_client import chat_qwen
-
-    history = st.session_state.chat_messages[-13:-1]
-    messages = [
-        {
-            "role": "system",
-            "content": (
-                "당신은 사내 Qwen 기반 소스코드 보안점검 도우미입니다. "
-                "한국어로 간결하고 정확하게 답하고, 실제 점검 결과가 없는 경우 "
-                "점검을 완료했다고 말하지 마세요. 보안점검 실행은 앱에서 별도로 처리합니다."
-            ),
-        },
-        *history,
-        {"role": "user", "content": message},
-    ]
-    return chat_qwen(messages)
+    except Exception as error:
+        st.session_state.scan_error = str(error)
+    finally:
+        st.session_state.scan_running = False
 
 
 # ============================================================
@@ -385,86 +224,47 @@ st.title("🔐 AI Source Security Analyzer")
 st.write("Java / JavaScript / JSP 소스코드를 AI 기반으로 보안 점검합니다.")
 st.divider()
 
-scan_col, chat_col = st.columns([2, 1], gap="large")
+st.subheader("소스 코드")
+col1, col2 = st.columns([5, 1])
 
-with scan_col:
-    st.subheader("소스 코드")
-    col1, col2 = st.columns([5, 1])
+is_scanning = st.session_state.scan_running
 
-    is_scanning = st.session_state.scan_running
-
-    with col1:
-        st.text_input(
-            "소스 코드 경로",
-            key="source_dir",
-            disabled=is_scanning,
-            label_visibility="collapsed",
-        )
-
-    with col2:
-        st.button(
-            "📁 폴더 선택",
-            on_click=select_folder,
-            disabled=is_scanning,
-            use_container_width=True,
-        )
-
-    st.caption(
-        "선택한 폴더와 하위 폴더에서 Java / JavaScript / JSP 파일을 자동으로 탐색합니다."
-    )
-    st.divider()
-
-    st.button(
-        "🔍 보안 점검 시작",
+with col1:
+    st.text_input(
+        "소스 코드 경로",
+        key="source_dir",
         disabled=is_scanning,
-        type="primary",
+        label_visibility="collapsed",
+    )
+
+with col2:
+    st.button(
+        "📁 폴더 선택",
+        on_click=select_folder,
+        disabled=is_scanning,
         use_container_width=True,
-        on_click=request_scan,
     )
 
-    if should_run_scan:
-        start_scan_job()
-        st.rerun()
+st.caption(
+    "선택한 폴더와 하위 폴더에서 Java / JavaScript / JSP 파일을 자동으로 탐색합니다."
+)
+st.divider()
 
-    render_scan_progress()
+st.button(
+    "🔍 보안 점검 시작",
+    disabled=is_scanning,
+    type="primary",
+    use_container_width=True,
+    on_click=request_scan,
+)
 
-    if st.session_state.scan_error:
-        st.error(st.session_state.scan_error)
+if should_run_scan:
+    execute_scan()
+    st.rerun()
 
-    if st.session_state.scan_result is not None:
-        st.divider()
-        show_result(st.session_state.scan_result)
+if st.session_state.scan_error:
+    st.error(st.session_state.scan_error)
 
-with chat_col:
-    st.subheader("💬 Qwen 채팅")
-    st.caption(
-        "점검 중에도 대화할 수 있습니다. 일반 질문이나 ‘현재 선택한 폴더 보안점검 해줘’를 입력하세요."
-    )
-    for chat_message in st.session_state.chat_messages:
-        with st.chat_message(chat_message["role"]):
-            st.markdown(chat_message["content"])
-
-    prompt = st.chat_input(
-        "Qwen에게 질문하거나 보안점검을 요청하세요",
-    )
-    if prompt:
-        st.session_state.chat_messages.append(
-            {"role": "user", "content": prompt}
-        )
-        if is_scan_request(prompt):
-            st.session_state.chat_scan_pending = True
-            request_scan()
-            st.rerun()
-        else:
-            with st.spinner("Qwen이 답변을 작성하고 있습니다..."):
-                try:
-                    answer = answer_chat(prompt)
-                except Exception as error:
-                    answer = (
-                        "Qwen에 연결하지 못했습니다. 사내 Qwen 연결 설정과 네트워크를 "
-                        f"확인해 주세요. 상세 오류: {error}"
-                    )
-            st.session_state.chat_messages.append(
-                {"role": "assistant", "content": answer}
-            )
-            st.rerun()
+if st.session_state.scan_result is not None:
+    st.divider()
+    show_result(st.session_state.scan_result)
