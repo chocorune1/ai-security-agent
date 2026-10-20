@@ -37,6 +37,10 @@ if "source_dir" not in st.session_state:
 
 if "active_job_id" not in st.session_state:
     st.session_state.active_job_id = None
+if "scan_result" not in st.session_state:
+    st.session_state.scan_result = None
+if "scan_error" not in st.session_state:
+    st.session_state.scan_error = None
 
 # Streamlit은 화면을 다시 그릴 때 스크립트를 새 모듈에서 실행하므로
 # 모듈 전역 변수는 rerun 사이에 유지되지 않습니다. Job Store를 세션
@@ -122,6 +126,9 @@ def start_scan():
         st.error(f"입력한 경로가 폴더가 아닙니다: {source_path}")
         return
 
+    st.session_state.scan_result = None
+    st.session_state.scan_error = None
+
     job_id = str(uuid.uuid4())
 
     JOB_STORE[job_id] = {
@@ -152,9 +159,16 @@ def show_result(result):
         return
 
     findings = result.get("findings") or result.get("vulnerabilities") or []
-    report_path = result.get("report_path") or result.get("html_report")
+    report_path = (
+        result.get("report_file")
+        or result.get("report_path")
+        or result.get("html_report")
+    )
 
     st.success("보안점검이 완료되었습니다.")
+    summary_col1, summary_col2 = st.columns(2)
+    summary_col1.metric("분석 파일", result.get("source_count", 0))
+    summary_col2.metric("발견 취약점", len(findings))
 
     if findings:
         st.subheader("🔎 취약점 목록")
@@ -197,8 +211,11 @@ def render_scan_progress(job_id):
     job = JOB_STORE.get(job_id)
 
     if job is None:
-        st.warning("점검 작업 정보를 찾을 수 없습니다. 다시 실행해 주세요.")
+        st.session_state.scan_error = (
+            "점검 작업 정보를 찾을 수 없습니다. 다시 실행해 주세요."
+        )
         st.session_state.active_job_id = None
+        st.rerun()
         return
 
     st.divider()
@@ -213,14 +230,17 @@ def render_scan_progress(job_id):
     st.info(message)
 
     if job.get("error") is not None:
-        st.error(str(job["error"]))
+        st.session_state.scan_error = str(job["error"])
         st.session_state.active_job_id = None
+        st.rerun()
         return
 
     if job.get("done"):
-        result = job.get("result")
+        st.session_state.scan_result = job.get("result")
         st.session_state.active_job_id = None
-        show_result(result)
+        # Completion must rerun the whole page so the buttons outside the
+        # fragment are re-enabled and the saved summary is rendered below.
+        st.rerun()
         return
 
     st.caption("분석이 진행 중입니다. 이 화면은 자동으로 갱신됩니다.")
@@ -301,3 +321,10 @@ if st.session_state.active_job_id:
         if job is not None and not job.get("done"):
             time.sleep(1)
             st.rerun()
+
+if st.session_state.scan_error:
+    st.error(st.session_state.scan_error)
+
+if st.session_state.scan_result is not None:
+    st.divider()
+    show_result(st.session_state.scan_result)
