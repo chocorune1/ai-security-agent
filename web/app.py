@@ -149,31 +149,61 @@ def show_result(result):
     )
 
     st.success("보안점검이 완료되었습니다.")
-    summary_col1, summary_col2 = st.columns(2)
-    summary_col1.metric("분석 파일", result.get("source_count", 0))
-    summary_col2.metric("발견 취약점", len(findings))
+    st.subheader("점검 결과")
+
+    critical_count = sum(
+        1 for finding in findings if finding.get("severity") == "CRITICAL"
+    )
+    high_count = sum(
+        1 for finding in findings if finding.get("severity") == "HIGH"
+    )
+    medium_count = sum(
+        1 for finding in findings if finding.get("severity") == "MEDIUM"
+    )
+    summary_cols = st.columns(5)
+    summary_cols[0].metric("분석 파일", result.get("source_count", 0))
+    summary_cols[1].metric("전체 취약점", len(findings))
+    summary_cols[2].metric("Critical", critical_count)
+    summary_cols[3].metric("High", high_count)
+    summary_cols[4].metric("Medium", medium_count)
 
     if findings:
-        st.subheader("🔎 취약점 목록")
-        rows = []
+        st.subheader("취약점 목록")
         for index, finding in enumerate(findings, 1):
-            rows.append(
-                {
-                    "No.": index,
-                    "취약점": finding.get("type", "-"),
-                    "Severity": finding.get("severity", "-"),
-                    "파일": finding.get("file", "-"),
-                    "라인": finding.get("line", "-"),
-                    "상태": finding.get("status", "-"),
-                    "신뢰도": finding.get("confidence", "-"),
-                }
-            )
-        st.dataframe(rows, use_container_width=True, hide_index=True)
+            vulnerability_type = finding.get("type", "-")
+            severity = finding.get("severity", "-")
+            file_name = finding.get("file", "-")
+            line = finding.get("line", "-")
+
+            with st.expander(
+                f"{index}. {vulnerability_type} [{severity}] {file_name}:{line}"
+            ):
+                col1, col2, col3 = st.columns(3)
+                col1.write("**심각도**")
+                col1.write(severity)
+                col2.write("**상태**")
+                col2.write(finding.get("status", "-"))
+                col3.write("**신뢰도**")
+                col3.write(finding.get("confidence", "-"))
+
+                st.write(f"**탐지 방법:** {finding.get('detection', '-')}")
+                st.write(f"**파일:** {file_name}")
+                st.write(f"**라인:** {line}")
+                st.markdown("#### 🔎 증거")
+                st.code(finding.get("evidence", "-"), language="text")
+                st.markdown("#### 설명")
+                st.write(finding.get("description", "-"))
+                st.markdown("#### AI 판단 근거")
+                st.write(finding.get("reason", "-"))
+                st.markdown("#### 🛠 개선 방법")
+                st.write(finding.get("recommendation", "-"))
     else:
-        st.info("취약점이 발견되지 않았습니다.")
+        st.success("취약점이 발견되지 않았습니다.")
 
     if report_path:
-        st.subheader("📄 HTML 리포트")
+        st.divider()
+        st.subheader("HTML 리포트")
+        st.success("HTML 보안 리포트가 생성되었습니다.")
         st.code(str(report_path), language="text")
 
         report_file = Path(report_path)
