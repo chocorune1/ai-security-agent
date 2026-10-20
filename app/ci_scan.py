@@ -1,4 +1,4 @@
-"""Run the existing security agent against a GitLab checkout."""
+"""Run the existing security agent against a CI checkout."""
 
 from __future__ import annotations
 
@@ -19,8 +19,12 @@ def main() -> int:
     )
     parser.add_argument(
         "--source-dir",
-        default=os.getenv("CI_PROJECT_DIR", str(BASE_DIR)),
-        help="Directory to scan (defaults to CI_PROJECT_DIR or the repository root).",
+        default=(
+            os.getenv("GITHUB_WORKSPACE")
+            or os.getenv("CI_PROJECT_DIR")
+            or str(BASE_DIR)
+        ),
+        help="Directory to scan (defaults to the CI workspace or repository root).",
     )
     args = parser.parse_args()
 
@@ -61,6 +65,21 @@ def main() -> int:
             f"{finding.get('status', '-')} / {finding.get('type', '-')} / "
             f"{finding.get('file', '-')}: {finding.get('line', '-')}"
         )
+
+    from llm import qwen_client
+
+    if qwen_client.QWEN_REQUEST_ERRORS:
+        print(
+            f"Qwen API 요청 오류: {qwen_client.QWEN_REQUEST_ERRORS}회"
+        )
+        if os.getenv("REQUIRE_QWEN", "false").strip().lower() in {
+            "1", "true", "yes", "on"
+        }:
+            print(
+                "오류: Qwen AI 분석에 실패했습니다. Runner에서 Qwen 주소로 "
+                "접속할 수 있는지 확인하세요."
+            )
+            return 3
 
     fail_on = {
         item.strip().upper()
