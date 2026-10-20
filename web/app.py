@@ -2,9 +2,6 @@ import sys
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog
-import threading
-import time
-import uuid
 
 import streamlit as st
 
@@ -35,20 +32,19 @@ st.set_page_config(
 if "source_dir" not in st.session_state:
     st.session_state.source_dir = str(BASE_DIR / "data" / "source")
 
-if "active_job_id" not in st.session_state:
-    st.session_state.active_job_id = None
 if "scan_result" not in st.session_state:
     st.session_state.scan_result = None
 if "scan_error" not in st.session_state:
     st.session_state.scan_error = None
+if "scan_requested" not in st.session_state:
+    st.session_state.scan_requested = False
+if "scan_running" not in st.session_state:
+    st.session_state.scan_running = False
 
-# Streamlit은 화면을 다시 그릴 때 스크립트를 새 모듈에서 실행하므로
-# 모듈 전역 변수는 rerun 사이에 유지되지 않습니다. Job Store를 세션
-# 상태에 보관해 백그라운드 Thread와 이후 화면 실행이 같은 객체를 봅니다.
-if "scan_jobs" not in st.session_state:
-    st.session_state.scan_jobs = {}
-
-JOB_STORE = st.session_state.scan_jobs
+should_run_scan = st.session_state.scan_requested
+if should_run_scan:
+    st.session_state.scan_requested = False
+    st.session_state.scan_running = True
 
 
 # ============================================================
@@ -67,87 +63,74 @@ def select_folder():
 
 
 # ============================================================
-# Agent 실행 Thread
+# 보안점검 실행
 # ============================================================
-def update_job_state(job_id, progress, message):
-    job = JOB_STORE.get(job_id)
-    if job is None:
-        return
-
-    job["progress"] = max(0, min(100, int(progress)))
-    job["message"] = message or ""
+def request_scan():
+    st.session_state.scan_result = None
+    st.session_state.scan_error = None
+    st.session_state.scan_requested = True
 
 
-def run_security_agent(job_id, source_path):
-    try:
-        from agent.security_agent import SecurityAgent
+def run_security_agent(source_path, progress_bar, stage_display, message_display):
+    from agent.security_agent import SecurityAgent
 
-        job = JOB_STORE.get(job_id)
-        if job is None:
-            return
+    def update_progress(progress, message):
+        progress = max(0, min(100, int(progress)))
+        if progress < 15:
+            stage = "소스코드 수집"
+        elif progress < 40:
+            stage = "Rule 기반 보안점검"
+        elif progress < 65:
+            stage = "Qwen AI 분석"
+        elif progress < 80:
+            stage = "AI 검증"
+        elif progress < 90:
+            stage = "결과 통합"
+        elif progress < 100:
+            stage = "HTML 리포트 생성"
+        else:
+            stage = "완료"
 
-        job["stage"] = "Source Analyzer"
-        job["message"] = "소스코드를 수집하고 있습니다..."
-        job["progress"] = 5
+        progress_bar.progress(progress)
+        stage_display.write(f"**현재 단계:** {stage}")
+        message_display.info(message or "분석 중입니다...")
 
-        agent = SecurityAgent(source_dir=str(source_path))
-        result = agent.run(
-            progress_callback=lambda progress, message: update_job_state(
-                job_id, progress, message
-            )
-        )
-
-        job["progress"] = 100
-        job["stage"] = "완료"
-        job["message"] = "보안점검이 완료되었습니다."
-        job["result"] = result
-        job["done"] = True
-
-    except Exception as e:
-        job = JOB_STORE.get(job_id)
-        if job is not None:
-            job["error"] = e
-            job["stage"] = "오류"
-            job["message"] = "보안점검 중 오류가 발생했습니다."
-            job["done"] = True
+    agent = SecurityAgent(source_dir=str(source_path))
+    return agent.run(progress_callback=update_progress)
 
 
-# ============================================================
-# 보안점검 시작
-# ============================================================
-def start_scan():
-    source_path = Path(st.session_state.source_dir)
+def execute_scan():
+    source_path = Path(st.session_state.source_dir).expanduser()
 
     if not source_path.exists():
-        st.error(f"소스 경로를 찾을 수 없습니다: {source_path}")
+        st.session_state.scan_error = f"소스 경로를 찾을 수 없습니다: {source_path}"
+        st.session_state.scan_running = False
         return
 
     if not source_path.is_dir():
-        st.error(f"입력한 경로가 폴더가 아닙니다: {source_path}")
+        st.session_state.scan_error = f"입력한 경로가 폴더가 아닙니다: {source_path}"
+        st.session_state.scan_running = False
         return
 
-    st.session_state.scan_result = None
-    st.session_state.scan_error = None
+    st.divider()
+    st.subheader("🔍 보안점검 진행 상황")
+    progress_bar = st.progress(0)
+    stage_display = st.empty()
+    message_display = st.empty()
+    stage_display.write("**현재 단계:** 준비")
+    message_display.info("보안점검을 시작하고 있습니다...")
 
-    job_id = str(uuid.uuid4())
-
-    JOB_STORE[job_id] = {
-        "progress": 0,
-        "stage": "준비",
-        "message": "보안점검을 준비하고 있습니다...",
-        "done": False,
-        "result": None,
-        "error": None,
-    }
-
-    st.session_state.active_job_id = job_id
-
-    thread = threading.Thread(
-        target=run_security_agent,
-        args=(job_id, source_path),
-        daemon=True,
-    )
-    thread.start()
+    try:
+        st.session_state.scan_result = run_security_agent(
+            source_path,
+            progress_bar,
+            stage_display,
+            message_display,
+        )
+    except Exception as error:
+        st.session_state.scan_error = str(error)
+    finally:
+        st.session_state.scan_running = False
 
 
 # ============================================================
@@ -205,48 +188,6 @@ def show_result(result):
 
 
 # ============================================================
-# 진행 화면
-# ============================================================
-def render_scan_progress(job_id):
-    job = JOB_STORE.get(job_id)
-
-    if job is None:
-        st.session_state.scan_error = (
-            "점검 작업 정보를 찾을 수 없습니다. 다시 실행해 주세요."
-        )
-        st.session_state.active_job_id = None
-        st.rerun()
-        return
-
-    st.divider()
-    st.subheader("🔍 보안점검 진행 상황")
-
-    progress = int(job.get("progress", 0))
-    stage = job.get("stage", "분석 중")
-    message = job.get("message", "")
-
-    st.progress(progress)
-    st.write(f"**현재 단계:** {stage}")
-    st.info(message)
-
-    if job.get("error") is not None:
-        st.session_state.scan_error = str(job["error"])
-        st.session_state.active_job_id = None
-        st.rerun()
-        return
-
-    if job.get("done"):
-        st.session_state.scan_result = job.get("result")
-        st.session_state.active_job_id = None
-        # Completion must rerun the whole page so the buttons outside the
-        # fragment are re-enabled and the saved summary is rendered below.
-        st.rerun()
-        return
-
-    st.caption("분석이 진행 중입니다. 이 화면은 자동으로 갱신됩니다.")
-
-
-# ============================================================
 # 화면
 # ============================================================
 st.title("🔐 AI Source Security Analyzer")
@@ -256,8 +197,7 @@ st.divider()
 st.subheader("소스 코드")
 col1, col2 = st.columns([5, 1])
 
-active_job_id = st.session_state.active_job_id
-is_scanning = bool(active_job_id and active_job_id in JOB_STORE and not JOB_STORE[active_job_id].get("done"))
+is_scanning = st.session_state.scan_running
 
 with col1:
     st.text_input(
@@ -280,47 +220,17 @@ st.caption(
 )
 st.divider()
 
-start_clicked = st.button(
+st.button(
     "🔍 보안 점검 시작",
     disabled=is_scanning,
     type="primary",
     use_container_width=True,
+    on_click=request_scan,
 )
 
-# 버튼 클릭을 현재 실행 사이클에서 직접 처리합니다.
-# on_click 콜백보다 먼저 화면 상태를 확실히 반영할 수 있어
-# 클릭 직후 버튼 비활성화 및 진행 화면 표시가 가능합니다.
-if start_clicked:
-    start_scan()
-    # Re-render immediately so the start button becomes disabled and the
-    # progress fragment is registered on the first run after starting a job.
+if should_run_scan:
+    execute_scan()
     st.rerun()
-
-
-# ============================================================
-# Streamlit Fragment 기반 진행상황 Polling
-# while + sleep으로 전체 Streamlit 실행을 붙잡지 않습니다.
-# ============================================================
-if st.session_state.active_job_id:
-    if hasattr(st, "fragment"):
-
-        @st.fragment(run_every="0.5s")
-        def scan_progress_fragment():
-            job_id = st.session_state.active_job_id
-            if job_id:
-                render_scan_progress(job_id)
-
-        scan_progress_fragment()
-
-    else:
-        # 구버전 Streamlit 호환: 화면을 1초 간격으로 다시 그려 진행률을
-        # 갱신합니다. 작업 자체는 별도 Thread에서 계속 실행됩니다.
-        job_id = st.session_state.active_job_id
-        render_scan_progress(job_id)
-        job = JOB_STORE.get(job_id)
-        if job is not None and not job.get("done"):
-            time.sleep(1)
-            st.rerun()
 
 if st.session_state.scan_error:
     st.error(st.session_state.scan_error)
