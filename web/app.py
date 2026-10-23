@@ -31,6 +31,10 @@ st.set_page_config(
 # ============================================================
 if "source_dir" not in st.session_state:
     st.session_state.source_dir = str(BASE_DIR / "data" / "source")
+if "source_file" not in st.session_state:
+    st.session_state.source_file = ""
+if "scan_mode" not in st.session_state:
+    st.session_state.scan_mode = "폴더 전체"
 
 if "scan_result" not in st.session_state:
     st.session_state.scan_result = None
@@ -60,6 +64,24 @@ def select_folder():
 
     if selected_folder:
         st.session_state.source_dir = selected_folder
+
+
+def select_file():
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+
+    selected_file = filedialog.askopenfilename(
+        title="보안점검할 소스 파일 선택",
+        filetypes=[
+            ("지원 소스 파일", "*.java *.js *.jsp"),
+            ("모든 파일", "*.*"),
+        ],
+    )
+    root.destroy()
+
+    if selected_file:
+        st.session_state.source_file = selected_file
 
 
 # ============================================================
@@ -100,15 +122,31 @@ def run_security_agent(source_path, progress_bar, stage_display, message_display
 
 
 def execute_scan():
-    source_path = Path(st.session_state.source_dir).expanduser()
+    is_single_file = st.session_state.scan_mode == "파일 하나"
+    configured_path = (
+        st.session_state.source_file
+        if is_single_file
+        else st.session_state.source_dir
+    )
+    source_path = Path(configured_path).expanduser()
 
-    if not source_path.exists():
+    if not configured_path.strip() or not source_path.exists():
         st.session_state.scan_error = f"소스 경로를 찾을 수 없습니다: {source_path}"
         st.session_state.scan_running = False
         return
 
-    if not source_path.is_dir():
+    if is_single_file and not source_path.is_file():
+        st.session_state.scan_error = f"입력한 경로가 파일이 아닙니다: {source_path}"
+        st.session_state.scan_running = False
+        return
+
+    if not is_single_file and not source_path.is_dir():
         st.session_state.scan_error = f"입력한 경로가 폴더가 아닙니다: {source_path}"
+        st.session_state.scan_running = False
+        return
+
+    if is_single_file and source_path.suffix.lower() not in {".java", ".js", ".jsp"}:
+        st.session_state.scan_error = "지원하지 않는 파일 형식입니다. Java, JavaScript, JSP 파일만 점검할 수 있습니다."
         st.session_state.scan_running = False
         return
 
@@ -225,29 +263,51 @@ st.write("Java / JavaScript / JSP 소스코드를 AI 기반으로 보안 점검�
 st.divider()
 
 st.subheader("소스 코드")
-col1, col2 = st.columns([5, 1])
+st.radio(
+    "점검 범위",
+    ["폴더 전체", "파일 하나"],
+    horizontal=True,
+    key="scan_mode",
+    disabled=st.session_state.scan_running,
+)
 
 is_scanning = st.session_state.scan_running
 
-with col1:
-    st.text_input(
-        "소스 코드 경로",
-        key="source_dir",
-        disabled=is_scanning,
-        label_visibility="collapsed",
-    )
-
-with col2:
-    st.button(
-        "📁 폴더 선택",
-        on_click=select_folder,
-        disabled=is_scanning,
-        use_container_width=True,
-    )
-
-st.caption(
-    "선택한 폴더와 하위 폴더에서 Java / JavaScript / JSP 파일을 자동으로 탐색합니다."
-)
+if st.session_state.scan_mode == "폴더 전체":
+    col1, col2 = st.columns([5, 1])
+    with col1:
+        st.text_input(
+            "소스 폴더 경로",
+            key="source_dir",
+            disabled=is_scanning,
+            label_visibility="collapsed",
+        )
+    with col2:
+        st.button(
+            "📁 폴더 선택",
+            on_click=select_folder,
+            disabled=is_scanning,
+            use_container_width=True,
+        )
+    st.caption("선택한 폴더와 하위 폴더에서 Java / JavaScript / JSP 파일을 점검합니다.")
+else:
+    col1, col2 = st.columns([5, 1])
+    with col1:
+        st.text_input(
+            "소스 파일 경로",
+            key="source_file",
+            placeholder=r"예: C:\project\src\Login.java",
+            disabled=is_scanning,
+            label_visibility="collapsed",
+        )
+    with col2:
+        st.button(
+            "📄 파일 선택",
+            on_click=select_file,
+            disabled=is_scanning,
+            use_container_width=True,
+        )
+    st.caption("파일 경로를 입력하거나 선택하세요. Java / JavaScript / JSP 파일 하나만 점검합니다.")
 st.divider()
 
 st.button(

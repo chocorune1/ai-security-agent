@@ -8,21 +8,31 @@ SUPPORTED_EXTENSIONS = {
 }
 
 
-def load_source_files(source_dir):
+def load_source_files(source_path):
     """
-    지정된 폴더에서 Java, JavaScript, JSP 소스 파일을 찾아 읽는다.
+    지정된 파일 하나 또는 폴더의 Java, JavaScript, JSP 파일을 읽는다.
     """
 
-    source_dir = Path(source_dir)
+    source_path = Path(source_path).expanduser()
 
-    if not source_dir.exists():
-        raise FileNotFoundError(
-            f"Source directory not found: {source_dir}"
-        )
+    if not source_path.exists():
+        raise FileNotFoundError(f"Source path not found: {source_path}")
 
     source_files = []
 
-    for file_path in source_dir.rglob("*"):
+    if source_path.is_file():
+        if source_path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+            supported = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+            raise ValueError(
+                f"Unsupported source file: {source_path}. Supported extensions: {supported}"
+            )
+        file_paths = [source_path]
+    elif source_path.is_dir():
+        file_paths = source_path.rglob("*")
+    else:
+        raise ValueError(f"Source path is neither a file nor a directory: {source_path}")
+
+    for file_path in file_paths:
 
         if not file_path.is_file():
             continue

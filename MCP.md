@@ -1,9 +1,14 @@
 # MCP server
 
-The MCP server exposes `security_scan(source_dir)`. It calls the existing
+The MCP server exposes two tools:
+
+- `security_scan(source_dir)` scans supported files recursively in a directory.
+- `security_scan_file(file_path)` scans exactly one `.java`, `.js`, or `.jsp` file.
+
+Both call the existing
 `app/agent/security_agent.py` pipeline used by Streamlit, including source
 loading, rule and AI analysis, validation, finding merge, and HTML report
-generation. Streamlit remains available and is not changed.
+generation. Streamlit also supports both folder and single-file scans.
 
 ## Install and run
 
@@ -26,9 +31,40 @@ To test with the official SDK Inspector (in the same activated environment):
 mcp dev app/mcp_server.py
 ```
 
-Call `security_scan` with an absolute directory path. The scanner recursively
-reads `.java`, `.js`, and `.jsp` files and writes the HTML report under the
+Call `security_scan` with an absolute directory path, or `security_scan_file`
+with an absolute file path including its filename. The single-file tool only
+accepts `.java`, `.js`, and `.jsp`. Both tools write the HTML report under the
 project's existing `reports/` directory.
+
+## Cline configuration
+
+In VS Code, open Cline's **MCP Servers** view, choose **Configure**, and select
+**Configure MCP Servers**. Add this entry to `cline_mcp_settings.json`, keeping
+any existing server entries and replacing the paths with the absolute VDI paths
+to the Python environment and repository:
+
+```json
+{
+  "mcpServers": {
+    "ai-security-agent": {
+      "command": "C:\\path\\to\\project-venv\\Scripts\\python.exe",
+      "args": ["C:\\path\\to\\ai-security-agent\\app\\mcp_server.py"],
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}
+```
+
+After saving, confirm the server is enabled in **Installed** and that
+`security_scan_file` appears in its tool list. In Cline chat, request a scan
+using the absolute file path, for example: “Use `security_scan_file` to scan
+`C:\\project\\src\\Login.java` and summarize the findings.”
+
+The configured Python must have the project's dependencies and the MCP SDK
+installed, and it must be able to reach the Qwen endpoint configured by the
+project. Cline's own model connection does not supply Qwen settings to the
+Python server.
 
 ## Claude Desktop configuration
 

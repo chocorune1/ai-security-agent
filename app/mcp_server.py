@@ -24,21 +24,8 @@ mcp = MCPServer("AI Security Agent")
 _agent_stdout_lock = threading.Lock()
 
 
-@mcp.tool()
-def security_scan(source_dir: str) -> str:
-    """Scan a local source directory containing Java, JavaScript, or JSP files.
-
-    Runs the same SecurityAgent pipeline used by Streamlit and returns a JSON
-    string with source count, findings, and the generated HTML report path.
-    The path is read for analysis; the report is written to the project's
-    existing reports directory.
-    """
-    scan_path = Path(source_dir).expanduser().resolve()
-    if not scan_path.exists():
-        raise ValueError(f"Source directory does not exist: {scan_path}")
-    if not scan_path.is_dir():
-        raise ValueError(f"Source path is not a directory: {scan_path}")
-
+def _run_scan(scan_path: Path) -> str:
+    """Run the existing scan pipeline and serialize its result."""
     # SecurityAgent prints progress to stdout. Keep MCP's stdio protocol clean.
     with _agent_stdout_lock, redirect_stdout(io.StringIO()):
         result: dict[str, Any] = SecurityAgent(source_dir=str(scan_path)).run()
@@ -51,6 +38,41 @@ def security_scan(source_dir: str) -> str:
         "report_file": str(report_path) if report_path else None,
     }
     return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+
+
+@mcp.tool()
+def security_scan(source_dir: str) -> str:
+    """Scan all Java, JavaScript, and JSP files under a local directory.
+
+    Runs the same SecurityAgent pipeline used by Streamlit and returns a JSON
+    string with source count, findings, and the generated HTML report path.
+    The report is written to the project's existing reports directory.
+    """
+    scan_path = Path(source_dir).expanduser().resolve()
+    if not scan_path.exists():
+        raise ValueError(f"Source directory does not exist: {scan_path}")
+    if not scan_path.is_dir():
+        raise ValueError(f"Source path is not a directory: {scan_path}")
+
+    return _run_scan(scan_path)
+
+
+@mcp.tool()
+def security_scan_file(file_path: str) -> str:
+    """Scan exactly one local Java, JavaScript, or JSP source file.
+
+    Provide the absolute path, including the file name. The report is written
+    to the project's existing reports directory.
+    """
+    scan_path = Path(file_path).expanduser().resolve()
+    if not scan_path.exists():
+        raise ValueError(f"Source file does not exist: {scan_path}")
+    if not scan_path.is_file():
+        raise ValueError(f"Source path is not a file: {scan_path}")
+    if scan_path.suffix.lower() not in {".java", ".js", ".jsp"}:
+        raise ValueError("Only .java, .js, and .jsp files can be scanned")
+
+    return _run_scan(scan_path)
 
 
 if __name__ == "__main__":
